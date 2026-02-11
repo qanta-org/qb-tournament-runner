@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  buzzer-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - CLIENT_URL=http://localhost:3001
+    volumes:
+      # Mount data directory for questions and responses
+      - ../Q25_week1:/app/data/Q25_week1:ro
+      - ../offline-0614:/app/data/offline-0614:ro
+      - ../online-0620:/app/data/online-0620:ro
+      # Persist uploads and game runs
+      - ./uploads:/app/uploads
+      - ./runs:/app/runs
+    restart: unless-stopped
+
+  # Optional: Nginx reverse proxy for production
+  # nginx:
+  #   image: nginx:alpine
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  #   depends_on:
+  #     - buzzer-web

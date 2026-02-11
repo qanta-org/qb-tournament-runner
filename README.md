@@ -1,0 +1,816 @@
+# Quiz Bowl Buzzer - Web Application
+
+A web-based Quiz Bowl buzzer system for human-AI hybrid competitions.
+
+## Features
+
+- **Multi-client architecture**: Moderator controls the game, players/spectators view on separate screens
+- **Room-based sessions**: 5-letter join codes for easy access
+- **Question navigation sidebar**: Jump to any question with color-coded outcomes (team wins, dead, pending)
+- **Question replay**: Replay any question with automatic score adjustment (previous scores reversed)
+- Real-time question streaming with word-by-word reveal
+- **Moderator preview mode**: See full question text with grayed unrevealed words
+- **Player reveal mode**: Words only appear as they're revealed
+- Support for multiple human and AI players per team
+- **Mid-game player management**: Add/remove human players during gameplay
+- Keyboard-based buzzer system for human players
+- AI player responses loaded from pre-generated CSV files
+- Configurable scoring (power points, penalties, bonus questions)
+- Tournament and simple dataset formats
+- Roster management with model validation
+- **Auto-generated API documentation**: Swagger UI for all REST endpoints
+
+## Client Types
+
+### Moderator Client
+- Creates a game room and receives a 5-letter join code
+- Full control: start game, reveal words, accept/reject answers, navigate/replay questions
+- Sees correct answers for all questions
+- Sees all dialogs and controls
+
+### Player/Spectator Client  
+- Joins a room using the 5-letter code
+- View-only: displays game state on a large screen
+- Shows: question text, scores, who buzzed, AI guesses
+- Does NOT show: correct answers until revealed, answer review dialogs
+- Multiple devices can join the same room
+
+---
+
+## Quick Start
+
+```bash
+cd buzzer-web
+npm install
+npm run dev
+```
+
+Open **http://localhost:5173** in your browser.
+
+### Starting a Game Session
+
+1. **Moderator**: Click "Start as Moderator" to create a room
+2. **Share the code**: Give the 5-letter room code to players/spectators
+3. **Players**: Click "Join as Viewer" and enter the room code
+4. **Moderator**: Configure teams, load data, and start the game
+5. **Play**: All connected clients see the game in real-time
+
+---
+
+## Dataset Directory Structure
+
+The application supports two data formats: **Simple** (single packet) and **Tournament** (multiple packets with rosters).
+
+### Simple Format
+
+For single-packet games or practice sessions:
+
+```
+dataset_name/
+├── tossups.csv              # Required: Tossup questions
+├── bonuses.csv              # Optional: Bonus questions  
+└── responses/               # Required for AI players
+    ├── model-name.buzz.csv      # Tossup responses
+    └── model-name.bonus.csv     # Bonus responses
+```
+
+**Example:** `Q25_week1/`
+
+### Tournament Format
+
+For multi-packet tournaments with player rosters:
+
+```
+tournament_name/
+├── ai_roster.csv            # Required: AI player definitions
+├── human_roster.csv         # Required: Human player definitions
+├── packet_1/
+│   ├── tossups.csv
+│   └── bonuses.csv
+├── packet_2/
+│   ├── tossups.csv
+│   └── bonuses.csv
+├── ... (more packets)
+└── responses/
+    ├── Author__model-name.buzz.csv
+    └── Author__model-name.bonus.csv
+```
+
+**Example:** `data/tourney/online-0620/`
+
+### File Format Reference
+
+#### tossups.csv
+
+| Column | Required | Description |
+|--------|----------|-------------|
+| `question_id` | Yes | Unique identifier |
+| `text` | Yes | Full question text |
+| `answer` | Yes | Primary answer |
+| `answers` | No | JSON array of acceptable answers |
+| `answerline` | No | Formatted answer line |
+| `category` | No | Question category |
+
+#### bonuses.csv
+
+| Column | Required | Description |
+|--------|----------|-------------|
+| `question_id` | Yes | Unique identifier |
+| `leadin` | Yes | Bonus lead-in text |
+| `part1`, `part2`, `part3` | Yes | Part questions |
+| `answer1`, `answer2`, `answer3` | Yes | Part answers |
+| `answerline1/2/3` | No | Formatted answer lines |
+
+#### ai_roster.csv
+
+| Column | Required | Description |
+|--------|----------|-------------|
+| `player_id` | Yes | Unique player ID |
+| `name` | Yes | Display name |
+| `type` | Yes | Must be "ai" |
+| `tossup_model` | Yes | Model name for tossups (must match response file) |
+| `bonus_model` | Yes | Model name for bonuses |
+| `tossup_model_cost` | No | Cost metric |
+| `skill_level` | No | Skill tier (High, Mid, Low) |
+
+**Important:** Model names must exactly match response file names (e.g., `Author__model` → `Author__model.buzz.csv`)
+
+#### human_roster.csv
+
+| Column | Required | Description |
+|--------|----------|-------------|
+| `player_id` | Yes | Unique player ID |
+| `name` | Yes | Display name |
+| `type` | Yes | Must be "human" |
+| `default_buzzer_key` | No | Default keyboard key for buzzing |
+| `team` | No | Team assignment |
+| `skill_level` | No | Skill tier |
+
+#### Response Files (*.buzz.csv)
+
+| Column | Required | Description |
+|--------|----------|-------------|
+| `question_id` | Yes | Matches tossup question_id |
+| `token_position` | Yes | Word position (0-indexed) |
+| `guess` | Yes | Model's answer guess |
+| `confidence` | Yes | Confidence score (0-1) |
+| `buzz` | Yes | Whether to buzz (0 or 1) |
+| `correct` | No | Whether guess was correct |
+
+#### Response Files (*.bonus.csv)
+
+| Column | Required | Description |
+|--------|----------|-------------|
+| `question_id` | Yes | Matches bonus question_id |
+| `part_number` | Yes | Part number (1, 2, or 3) |
+| `guess` | Yes | Model's answer guess |
+| `confidence` | Yes | Confidence score (0-1) |
+| `correct` | No | Whether guess was correct |
+
+---
+
+## Validation
+
+The application validates datasets and shows warnings/errors:
+
+| Issue | Type | Description |
+|-------|------|-------------|
+| Missing tossup responses | Error | AI roster references model without .buzz.csv file |
+| Missing bonus responses | Warning | AI roster references model without .bonus.csv file |
+| No responses directory | Warning | No AI players can be used |
+| No AI roster | Warning | Dataset has models but no roster to define AI players |
+
+---
+
+## Keyboard Controls
+
+| Key | Action |
+|-----|--------|
+| `1-9` (or custom) | Buzz for human player |
+| `→` or `Space` | Reveal next word / advance bonus |
+| `Y` | Accept answer (in review dialog) |
+| `N` | Reject answer with penalty |
+| `M` | Reject answer without penalty |
+
+---
+
+## API Documentation
+
+### Interactive API Docs (Swagger UI)
+
+After starting the server, visit:
+
+- **Swagger UI**: [http://localhost:3001/api/docs](http://localhost:3001/api/docs)
+- **OpenAPI JSON**: [http://localhost:3001/api/docs.json](http://localhost:3001/api/docs.json)
+
+The Swagger UI provides interactive documentation where you can explore and test all API endpoints.
+
+---
+
+## API Endpoints
+
+### Configuration
+- `GET /api/config/defaults` - Default game configuration
+- `POST /api/config/update` - Update configuration
+
+### Datasets
+- `GET /api/datasets/list` - List all available datasets with validation
+- `GET /api/datasets/:id` - Get dataset details
+- `GET /api/datasets/:id/validate` - Validate dataset
+- `GET /api/datasets/help/structure` - Get structure documentation (JSON)
+
+### Rosters
+- `GET /api/rosters/list` - List all roster files
+- `GET /api/rosters/ai?dataset=ID` - Get AI players (optionally from dataset)
+- `GET /api/rosters/human?dataset=ID` - Get human players
+
+### Files
+- `POST /api/files/upload` - Upload question/response files
+- `GET /api/files/list` - List uploaded files
+- `DELETE /api/files/:filename` - Delete uploaded file
+
+### Health
+- `GET /api/health` - Server health check
+
+---
+
+## WebSocket Events
+
+### Room Events
+- `room:create` → `room:created` - Moderator creates a room (returns 5-letter code)
+- `room:join` → `room:joined` - Player joins a room with code
+- `room:leave` - Leave current room
+- `room:player_count` - Moderator receives player count updates
+- `room:error` - Room-related errors
+
+### Game Events (Client → Server)
+- `game:start` - Start a new game with config (moderator only)
+- `moderator:next_word` - Reveal next word (moderator only)
+- `player:buzz` - Player buzzes in (moderator triggers for human players)
+- `moderator:answer_ruling` - Accept/reject answer (moderator only)
+- `moderator:adjust_points` - Manual score adjustment (moderator only)
+- `moderator:play_tossup` - Jump to and play specific tossup (moderator only)
+- `moderator:play_bonus` - Jump to and play specific bonus (moderator only)
+- `moderator:add_player` - Add human player mid-game (moderator only)
+- `moderator:remove_player` - Remove human player mid-game (moderator only)
+- `moderator:can_modify_players` - Check if players can be modified (moderator only)
+- `player:mute_toggle` - Toggle AI player mute status (moderator only)
+- `bonus:advance` - Move to next bonus stage (moderator only)
+- `bonus:human_response` - Submit human response for bonus (moderator only)
+- `bonus:final_answer` - Submit final bonus answer (moderator only)
+
+### Game Events (Server → Client)
+- `game:state` - Full game state update (filtered for players)
+- `game:config` - Game configuration
+- `game:error` - Error message
+
+---
+
+## Development
+
+```bash
+# Development mode (hot reload)
+npm run dev
+
+# Build for production
+npm run build
+
+# Production server
+npm start
+
+# Type checking
+npm run typecheck
+```
+
+---
+
+## Production Deployment
+
+### Docker
+
+```bash
+docker-compose up --build
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | 3001 | Server port |
+| `VITE_SOCKET_URL` | - | WebSocket URL (auto-detected in dev) |
+
+---
+
+## System Architecture
+
+### High-Level Overview
+
+```mermaid
+flowchart TB
+    subgraph Clients["🖥️ Browser Clients"]
+        direction LR
+        MC["👨‍💼 Moderator Client<br/><i>localhost:5173</i>"]
+        PC1["👁️ Player Client 1<br/><i>localhost:5173</i>"]
+        PC2["👁️ Player Client 2<br/><i>localhost:5173</i>"]
+    end
+
+    subgraph Server["⚙️ Node.js Server (localhost:3001)"]
+        direction TB
+        subgraph API["REST API"]
+            AR["/api/datasets"]
+            AR2["/api/rosters"]
+            AR3["/api/config"]
+        end
+        subgraph WS["WebSocket (Socket.io)"]
+            RM["Room Manager<br/><code>server/game/rooms.ts</code>"]
+            GE["Game Engine<br/><code>server/game/engine.ts</code>"]
+            EH["Event Handlers<br/><code>server/game/handlers.ts</code>"]
+        end
+        subgraph Data["Data Layer"]
+            QL["Question Loader<br/><code>server/data/questions.ts</code>"]
+            BL["Buzz Loader<br/><code>server/data/buzzes.ts</code>"]
+            AE["Answer Evaluator<br/><code>server/data/evaluation.ts</code>"]
+        end
+    end
+
+    subgraph Storage["📁 File System"]
+        DS[("Datasets<br/><code>data/tourney/</code>")]
+    end
+
+    MC <-->|"room:create<br/>game:start<br/>moderator:*"| WS
+    PC1 <-->|"room:join<br/>game:state"| WS
+    PC2 <-->|"room:join<br/>game:state"| WS
+    
+    MC -->|"GET datasets"| API
+    API --> Data
+    Data --> DS
+    WS --> Data
+```
+
+### Client Architecture
+
+```mermaid
+flowchart TB
+    subgraph ReactApp["React App (client/src/)"]
+        direction TB
+        
+        subgraph Entry["Entry Point"]
+            APP["App.tsx<br/><i>Role routing</i>"]
+        end
+        
+        subgraph Context["State Management"]
+            GC["GameContext.tsx<br/><i>Socket.io + Game State</i>"]
+        end
+        
+        subgraph ModViews["👨‍💼 Moderator Views"]
+            direction TB
+            RS["RoleSelection<br/><code>lobby/</code>"]
+            GS["GameSetup<br/><code>setup/</code>"]
+            GL["GameLayout<br/><code>layout/</code>"]
+        end
+        
+        subgraph PlayerViews["👁️ Player/Spectator Views"]
+            PV["PlayerView<br/><code>player/</code>"]
+        end
+        
+        subgraph SharedComps["Shared Components"]
+            direction LR
+            QD["QuestionDisplay<br/><code>question/</code>"]
+            BD["BonusDisplay<br/><code>bonus/</code>"]
+            SB["Scoreboard<br/><code>scoreboard/</code>"]
+            GT["GuessTable<br/><code>guesses/</code>"]
+        end
+        
+        subgraph ModOnly["Moderator-Only Components"]
+            direction LR
+            MC2["ModeratorControls<br/><code>controls/</code>"]
+            ARD["AnswerReviewDialog<br/><code>dialogs/</code>"]
+            RCD["ResponseCollectionDialog<br/><code>dialogs/</code>"]
+        end
+    end
+
+    APP --> GC
+    GC --> ModViews
+    GC --> PlayerViews
+    ModViews --> SharedComps
+    ModViews --> ModOnly
+    PlayerViews --> SharedComps
+```
+
+### Game Flow & Room Management
+
+```mermaid
+sequenceDiagram
+    participant M as Moderator
+    participant S as Server
+    participant P as Player Clients
+
+    Note over M,P: Room Creation
+    M->>S: room:create
+    S-->>M: room:created (code: "ABCDE")
+    
+    Note over M,P: Players Join
+    P->>S: room:join("ABCDE")
+    S-->>P: room:joined
+    S-->>M: room:player_count (n)
+    
+    Note over M,P: Game Setup
+    M->>S: game:start(config)
+    S-->>M: game:state (full)
+    S-->>P: game:state (filtered)
+    
+    Note over M,P: Gameplay Loop
+    loop Tossup Questions
+        M->>S: moderator:next_word
+        S-->>M: game:state (with answer)
+        S-->>P: game:state (no answer)
+        
+        alt AI Buzz
+            S-->>M: game:state (buzz_pending)
+            S-->>P: game:state (buzz_pending)
+        else Human Buzz
+            M->>S: player:buzz(player_id)
+        end
+        
+        M->>S: moderator:answer_ruling
+        S-->>M: game:state
+        S-->>P: game:state
+    end
+```
+
+### UI Views by Client Role
+
+| Component | Moderator | Player/Spectator | Code Location |
+|-----------|:---------:|:----------------:|---------------|
+| **Role Selection** | ✅ Creates room | ✅ Joins room | `client/src/components/lobby/RoleSelection.tsx` |
+| **Game Setup Wizard** | ✅ Full access | ❌ | `client/src/components/setup/GameSetup.tsx` |
+| **File/Dataset Loader** | ✅ | ❌ | `client/src/components/setup/FileUploader.tsx` |
+| **Team Builder** | ✅ | ❌ | `client/src/components/setup/TeamBuilder.tsx` |
+| **Scoreboard** | ✅ Detailed | ✅ Compact | `client/src/components/scoreboard/` |
+| **Question Display** | ✅ + Answer | ✅ No answer | `client/src/components/question/QuestionDisplay.tsx` |
+| **Bonus Display** | ✅ + Answer | ✅ No answer | `client/src/components/bonus/BonusDisplay.tsx` |
+| **AI Guess Table** | ✅ Full (guess + conf) | ✅ Confidence only | `client/src/components/guesses/GuessTable.tsx` |
+| **Top Guess Display** | ✅ | ❌ | `client/src/components/layout/GameLayout.tsx` |
+| **Moderator Controls** | ✅ | ❌ | `client/src/components/controls/ModeratorControls.tsx` |
+| **Answer Review Dialog** | ✅ | ❌ | `client/src/components/dialogs/AnswerReviewDialog.tsx` |
+| **Response Collection** | ✅ | ❌ | `client/src/components/dialogs/ResponseCollectionDialog.tsx` |
+| **Player View** | ❌ | ✅ | `client/src/components/player/PlayerView.tsx` |
+| **Question Navigation** | ✅ | ❌ | `client/src/components/navigation/QuestionNavSidebar.tsx` |
+
+### Directory Structure
+
+```
+buzzer-web/
+├── client/                     # React frontend (Vite + TypeScript)
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── bonus/          # Bonus question display
+│   │   │   ├── controls/       # Moderator control buttons
+│   │   │   ├── dialogs/        # Modal dialogs (answer review, etc.)
+│   │   │   ├── guesses/        # AI guess table
+│   │   │   ├── layout/         # Main game layout (moderator)
+│   │   │   ├── lobby/          # Role selection screen
+│   │   │   ├── navigation/     # Question navigation sidebar
+│   │   │   ├── player/         # Player/spectator view
+│   │   │   ├── question/       # Tossup question display
+│   │   │   ├── scoreboard/     # Team panels and scores
+│   │   │   └── setup/          # Game setup wizard
+│   │   ├── context/
+│   │   │   └── GameContext.tsx # Global state + Socket.io
+│   │   ├── hooks/
+│   │   │   └── useKeyboardBuzzer.ts # Keyboard event handling
+│   │   ├── styles/
+│   │   │   └── globals.css     # Tailwind CSS
+│   │   ├── App.tsx             # Main app with role routing
+│   │   └── socket.ts           # Socket.io client setup
+│   └── index.html
+│
+├── server/                     # Node.js backend (Express + Socket.io)
+│   ├── data/
+│   │   ├── questions.ts        # Load tossups & bonuses from CSV
+│   │   ├── buzzes.ts           # Load AI responses from CSV
+│   │   └── evaluation.ts       # Answer matching logic
+│   ├── game/
+│   │   ├── engine.ts           # Game state machine
+│   │   ├── handlers.ts         # Socket.io event handlers
+│   │   └── rooms.ts            # Room management (join codes)
+│   ├── routes/
+│   │   ├── config.ts           # Game config API
+│   │   ├── datasets.ts         # Dataset listing & validation
+│   │   ├── files.ts            # File upload handling
+│   │   └── rosters.ts          # Player roster API
+│   ├── swagger.ts              # Swagger/OpenAPI documentation config
+│   └── index.ts                # Server entry (Express + Socket.io)
+│
+├── shared/
+│   └── types.ts                # TypeScript types (shared)
+│
+└── data/tourney/               # Dataset storage location
+```
+
+---
+
+## Code Structure & Development Guide
+
+This section helps developers understand where different functionality lives and where to make changes.
+
+### Frontend (React) - `client/src/`
+
+#### Entry Points
+- **`App.tsx`**: Main application component that routes between moderator and player views based on role
+- **`main.tsx`**: React app entry point
+- **`socket.ts`**: Socket.io client initialization and connection management
+
+#### State Management
+- **`context/GameContext.tsx`**: 
+  - Global game state provider using React Context
+  - Manages Socket.io connection and event listeners
+  - Provides game state, config, and helper functions to all components
+  - **Key functions**: `startGame()`, `buzz()`, `nextWord()`, `submitAnswerRuling()`, etc.
+  - **When to modify**: Adding new Socket.io events, changing state structure, adding helper functions
+
+#### UI Components by Category
+
+**Lobby & Setup** (`components/lobby/`, `components/setup/`)
+- **`lobby/RoleSelection.tsx`**: Initial screen for choosing moderator or player role
+- **`setup/GameSetup.tsx`**: Multi-step wizard for configuring game (datasets, teams, players)
+- **`setup/FileUploader.tsx`**: File upload interface for questions/responses
+- **`setup/TeamBuilder.tsx`**: Team configuration with player selection (AI/human)
+  - **When to modify**: Changing setup flow, adding new configuration options
+
+**Game Display** (`components/layout/`, `components/question/`, `components/bonus/`)
+- **`layout/GameLayout.tsx`**: Main moderator game view layout
+  - Contains question display, scoreboard, AI guesses, controls
+  - **When to modify**: Changing moderator view layout, adding new sections
+- **`question/QuestionDisplay.tsx`**: Tossup question display for moderator
+  - Shows full question with grayed unrevealed words
+  - **When to modify**: Changing question display format, word reveal behavior
+- **`bonus/BonusDisplay.tsx`**: Bonus question display for moderator
+  - Shows lead-in and parts with answers
+  - **When to modify**: Changing bonus display format
+
+**Player View** (`components/player/`)
+- **`player/PlayerView.tsx`**: Read-only spectator/player view
+  - Two-row layout: teams at top, question below
+  - Shows confidences (not guesses) for tossups
+  - Shows full AI outputs for bonuses
+  - **When to modify**: Changing player view layout, information display
+
+**Navigation** (`components/navigation/`)
+- **`navigation/QuestionNavSidebar.tsx`**: Vertical sidebar with question navigation
+  - Two-column layout (tossups | bonuses)
+  - Color-coded by outcome (team colors, dead, pending)
+  - Preview dialog with "Play" button to jump to questions
+  - **When to modify**: Changing navigation UI, adding question metadata display
+
+**Scoreboard** (`components/scoreboard/`)
+- **`scoreboard/Scoreboard.tsx`**: Main scoreboard container
+- **`scoreboard/TeamPanel.tsx`**: Individual team panel with players, scores, mute status
+  - Includes "Manage Players" button for mid-game player management
+  - **When to modify**: Changing scoreboard layout, team display
+
+**Controls** (`components/controls/`)
+- **`controls/ModeratorControls.tsx`**: Control buttons for moderator actions
+  - Adjust points, mute players, etc.
+  - **When to modify**: Adding new moderator actions
+
+**Dialogs** (`components/dialogs/`)
+- **`dialogs/AnswerReviewDialog.tsx`**: Dialog for accepting/rejecting answers
+  - Shows player guess, correct answer (for AI), keyboard shortcuts
+  - **When to modify**: Changing answer review UI, adding new ruling types
+- **`dialogs/ResponseCollectionDialog.tsx`**: Dialog for collecting human bonus responses
+- **`dialogs/PlayerManagementDialog.tsx`**: Dialog for adding/removing players mid-game
+- **`dialogs/AdjustPointsDialog.tsx`**: Dialog for manual score adjustments
+  - **When to modify**: Changing dialog behavior, adding new dialogs
+
+**AI Outputs** (`components/guesses/`)
+- **`guesses/GuessTable.tsx`**: Table showing all AI guesses with confidences
+  - **When to modify**: Changing guess display format, adding columns
+
+**Hooks** (`hooks/`)
+- **`hooks/useKeyboardBuzzer.ts`**: Keyboard event handling for human player buzzes
+  - **When to modify**: Changing buzzer key mappings, adding keyboard shortcuts
+
+### Backend (Node.js) - `server/`
+
+#### Server Entry
+- **`index.ts`**: 
+  - Express server setup
+  - Socket.io server initialization
+  - API route registration
+  - CORS configuration
+  - **When to modify**: Adding new API routes, changing server configuration
+
+#### Game Logic (`server/game/`)
+
+**`game/engine.ts`** - Core Game Engine
+- **`GameEngine` class**: Main game state machine
+  - Manages game phases: `setup`, `tossup_ready`, `tossup_streaming`, `answer_review`, `bonus_*`, `game_over`
+  - Handles question progression, scoring, answer evaluation
+  - Tracks question results for navigation sidebar
+  - **Key methods**:
+    - `initialize()`: Load questions and AI responses
+    - `startGame()`: Begin a new game
+    - `nextQuestion()`: Move to next tossup
+    - `revealNextWord()`: Stream words one by one
+    - `handleBuzz()`: Process player buzz
+    - `handleAnswerRuling()`: Process accept/reject decision
+    - `startBonusQuestion()`: Begin bonus question
+    - `handleBonusFinalAnswer()`: Process bonus answer
+    - `playTossup(index)`: Jump to specific tossup
+    - `playBonus(index, owner)`: Jump to specific bonus
+    - `addPlayer()` / `removePlayer()`: Mid-game player management
+  - **When to modify**: Changing game rules, scoring logic, phase transitions, question navigation
+
+**`game/handlers.ts`** - Socket.io Event Handlers
+- Handles all WebSocket events from clients
+- Routes events to `GameEngine` methods
+- Manages room state broadcasting (moderator vs player filtering)
+- **Key handlers**:
+  - `room:create`, `room:join`: Room management
+  - `game:start`: Initialize game
+  - `moderator:next_word`: Word revelation
+  - `player:buzz`: Player buzzes
+  - `moderator:answer_ruling`: Answer acceptance/rejection
+  - `moderator:play_tossup`, `moderator:play_bonus`: Question navigation
+  - `moderator:add_player`, `moderator:remove_player`: Player management
+- **When to modify**: Adding new Socket.io events, changing event routing
+
+**`game/rooms.ts`** - Room Management
+- **`RoomManager` class**: Manages game rooms and client connections
+  - Creates rooms with 5-letter codes
+  - Tracks moderator and player connections
+  - Caches game state and config per room
+  - **When to modify**: Changing room creation logic, join code generation
+
+#### Data Layer (`server/data/`)
+
+**`data/questions.ts`** - Question Loading
+- **`Questions` class**: Loads and manages tossup/bonus questions
+  - Supports CSV, JSON, JSONL formats
+  - Handles power marks and answer equivalents
+  - **When to modify**: Changing question file format, adding new question types
+
+**`data/buzzes.ts`** - AI Response Loading
+- **`Buzzes` class**: Loads AI model responses from CSV files
+  - Maps model names to response files
+  - Provides responses for specific questions
+  - **When to modify**: Changing response file format, adding new response types
+
+**`data/evaluation.ts`** - Answer Evaluation
+- **`evaluateAnswer()`**: Checks if a guess matches correct answers
+  - Handles inflection (singular/plural)
+  - Uses answer equivalents
+  - **When to modify**: Changing answer matching logic, adding new evaluation rules
+
+#### API Routes (`server/routes/`)
+
+**`routes/datasets.ts`**: Dataset listing and validation
+- Lists available datasets
+- Validates dataset structure
+- Returns dataset metadata
+- **When to modify**: Changing dataset validation rules, adding new dataset formats
+
+**`routes/rosters.ts`**: Player roster management
+- Lists AI and human rosters
+- Loads rosters from CSV files
+- **When to modify**: Changing roster format, adding new roster fields
+
+**`routes/config.ts`**: Game configuration API
+- Default game settings
+- Configuration updates
+- **When to modify**: Adding new configuration options
+
+**`routes/files.ts`**: File upload handling
+- Handles multipart file uploads
+- Lists and deletes uploaded files
+- **When to modify**: Changing upload behavior, adding file validation
+
+**`swagger.ts`**: API documentation
+- Swagger/OpenAPI configuration
+- Auto-generates API docs from JSDoc comments
+- **When to modify**: Updating API documentation format
+
+### Shared Types (`shared/types.ts`)
+
+- **TypeScript interfaces and types** shared between frontend and backend
+- **Key types**:
+  - `GameState`: Complete game state structure
+  - `GameConfig`: Game configuration
+  - `Player`, `Team`: Player and team definitions
+  - `TossupQuestion`, `BonusQuestion`: Question structures
+  - `TossupResponse`, `BonusResponse`: AI response structures
+  - `QuestionResult`: Question outcome tracking for navigation (includes `previousScore` for replay)
+  - `ClientToServerEvents`, `ServerToClientEvents`: Socket.io event types
+- **When to modify**: Adding new state fields, changing data structures, adding new events
+
+### Game State Management
+
+#### State Initialization
+- **`createInitialGameState()`**: Creates a fresh game state with all fields properly initialized
+- All nullable fields (`currentTossupId`, `currentBonusId`, `bonusOwner`, etc.) are set to `null`
+- All arrays are initialized as empty arrays
+- All numeric fields have sensible defaults
+
+#### State Cleanup Patterns
+The engine properly cleans up state when transitioning between phases:
+
+- **Starting a new game** (`startGame()`): Resets all game state including scores, question numbers, and muted players
+- **Starting a tossup** (`startTossupQuestion()`): 
+  - Resets tossup-specific fields (word index, revealed text, team buzzed, etc.)
+  - **Clears bonus-related state** to prevent stale data
+- **Starting a bonus** (`startBonusQuestion()`):
+  - Resets bonus-specific fields (part number, stage, responses, etc.)
+  - **Clears tossup-related state** (buzzing player, guesses, answers) to prevent stale data
+
+#### State Filtering for Players
+- **`filterStateForPlayer()`**: Removes moderator-only information before sending to player clients
+- **Filtered fields**:
+  - `currentTossupAnswer` → `null` (players don't see answers until revealed)
+  - `currentBonusPartAnswer` → `null`
+  - `fullTossupText` → `null` (players only see `revealedText`)
+  - `tossupResults` → `[]` (navigation sidebar data)
+  - `bonusResults` → `[]`
+- **Security**: Full question text is never sent to player clients, only revealed words
+
+#### State Consistency Notes
+- **Question numbering**: `currentTossupNum` and `currentBonusNum` are 1-indexed for display but used as 0-indexed for array access
+- **Score tracking**: When replaying questions, previous scores are automatically reversed before replay
+- **Phase transitions**: All phase transitions properly reset relevant state fields
+- **Null safety**: Components check for null before accessing nullable fields (`bonusQuestion`, `bonusOwner`, etc.)
+
+#### Important State Fields
+
+**Always Present:**
+- `phase`, `scores`, `mutedPlayers`, `totalTossups`, `totalBonuses`
+
+**Tossup Phase Only:**
+- `currentTossupId`, `currentTossupAnswer`, `fullTossupText`, `wordIndex`, `revealedText`, `teamBuzzed`, `buzzingPlayer`, `currentGuesses`, `tossupPointsValue`
+
+**Bonus Phase Only:**
+- `currentBonusId`, `bonusOwner`, `bonusQuestion`, `currentBonusPart`, `bonusStage`, `bonusResponses`, `currentBonusPartAnswer`
+
+**Moderator Only (filtered for players):**
+- `currentTossupAnswer`, `currentBonusPartAnswer`, `fullTossupText`, `tossupResults`, `bonusResults`
+
+> **📋 State Review**: For a detailed analysis of state consistency, cleanup patterns, and best practices, see [`STATE_REVIEW.md`](./STATE_REVIEW.md).
+
+### Common Modification Tasks
+
+#### Adding a New UI Component
+1. Create component in appropriate `client/src/components/` subdirectory
+2. Import and use in parent component (e.g., `GameLayout.tsx` or `PlayerView.tsx`)
+3. Add any needed state to `GameContext.tsx` if global state is required
+4. Add Socket.io events in `shared/types.ts` if server communication needed
+
+#### Adding a New Game Feature
+1. **Frontend**: Add UI component and Socket.io event emission in `GameContext.tsx`
+2. **Backend**: Add event handler in `server/game/handlers.ts`
+3. **Logic**: Implement feature in `server/game/engine.ts` (if game logic)
+4. **Types**: Update `shared/types.ts` with new event types and state fields
+5. **State**: Update `GameState` interface if new state is needed
+6. **State Cleanup**: Ensure new state fields are properly reset in `startGame()`, `startTossupQuestion()`, or `startBonusQuestion()` as appropriate
+7. **State Filtering**: If the new field contains moderator-only info, add it to `filterStateForPlayer()` to set it to `null` or empty for players
+
+#### Changing Game Rules
+1. Modify `server/game/engine.ts` methods (scoring, phase transitions, etc.)
+2. Update `shared/types.ts` if rule changes affect state structure
+3. Update UI components if rule changes affect display
+
+#### Adding a New API Endpoint
+1. Create route handler in `server/routes/[name].ts`
+2. Register route in `server/index.ts`
+3. Add JSDoc comments for Swagger documentation
+4. Add types in `shared/types.ts` if needed
+
+#### Changing Question Display Format
+- **Moderator view**: `client/src/components/question/QuestionDisplay.tsx` or `bonus/BonusDisplay.tsx`
+- **Player view**: `client/src/components/player/PlayerView.tsx`
+- **Both**: Update shared components or create new ones
+
+#### Adding Keyboard Shortcuts
+1. Add handler in `client/src/hooks/useKeyboardBuzzer.ts` (for buzzes)
+2. Or add `useEffect` with keyboard listener in component (for other shortcuts)
+3. Document in README Keyboard Controls section
+
+#### Modifying Answer Evaluation
+1. Update `server/data/evaluation.ts` logic
+2. Test with various answer formats
+3. Update answer equivalent files if needed
+
+---
+
+## Troubleshooting
+
+### "Missing tossup responses for player X"
+- Check that the `tossup_model` in `ai_roster.csv` matches a `.buzz.csv` file in `responses/`
+- Model name must be exact (case-sensitive)
+
+### "No datasets found"
+- Place datasets in `data/tourney/` directory
+- Ensure dataset has `tossups.csv` or `packet_*/tossups.csv`
+
+### WebSocket connection fails
+- Check server is running on port 3001
+- Check browser console for CORS errors
+- Verify `VITE_SOCKET_URL` if deploying to different domain

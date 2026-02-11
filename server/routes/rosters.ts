@@ -1,0 +1,375 @@
+import { Router } from 'express';
+import path from 'path';
+import fs from 'fs';
+import { parse } from 'csv-parse/sync';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export const rostersRouter = Router();
+
+// Base directories for roster files
+const ROSTER_BASE_DIRS = [
+  path.join(__dirname, '../../../data/tourney'), // Tournament data
+  path.join(__dirname, '../../../'),              // Parent of buzzer-web
+];
+
+interface AIRosterEntry {
+  player_id: string;
+  name: string;
+  type: 'ai';
+  tossup_model: string;
+  tossup_model_cost?: number;
+  bonus_model: string;
+  description?: string;
+  default_buzzer_key?: string;
+  skill_level?: string;
+}
+
+interface HumanRosterEntry {
+  player_id: string;
+  name: string;
+  type: 'human';
+  description?: string;
+  default_buzzer_key?: string;
+  skill_level?: string;
+}
+
+type RosterEntry = AIRosterEntry | HumanRosterEntry;
+
+/**
+ * Find a roster file in any of the base directories
+ */
+function findRosterFile(filename: string): string | null {
+  // First check if it's an absolute path
+  if (path.isAbsolute(filename) && fs.existsSync(filename)) {
+    return filename;
+  }
+  
+  // Search in base directories
+  for (const baseDir of ROSTER_BASE_DIRS) {
+    const filePath = path.join(baseDir, filename);
+    if (fs.existsSync(filePath)) {
+      return filePath;
+    }
+    
+    // Also search in subdirectories (for tournament-specific rosters)
+    try {
+      const subdirs = fs.readdirSync(baseDir, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+        .map(d => d.name);
+      
+      for (const subdir of subdirs) {
+        const subPath = path.join(baseDir, subdir, filename);
+        if (fs.existsSync(subPath)) {
+          return subPath;
+        }
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Load a roster CSV file
+ */
+function loadRosterFile(filename: string): RosterEntry[] {
+  const filePath = findRosterFile(filename);
+  
+  if (!filePath) {
+    return [];
+  }
+  
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const records = parse(content, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_column_count: true, // Handle rows with inconsistent column counts
+    });
+    
+    return records.map((record: any) => {
+      if (record.type === 'ai') {
+        return {
+          player_id: record.player_id,
+          name: record.name,
+          type: 'ai' as const,
+          tossup_model: record.tossup_model || '',
+          tossup_model_cost: record.tossup_model_cost ? parseFloat(record.tossup_model_cost) : undefined,
+          bonus_model: record.bonus_model || '',
+          description: record.description || '',
+          default_buzzer_key: record.default_buzzer_key || '',
+          skill_level: record.skill_level || '',
+        };
+      } else {
+        return {
+          player_id: record.player_id,
+          name: record.name,
+          type: 'human' as const,
+          description: record.description || '',
+          default_buzzer_key: record.default_buzzer_key || '',
+          skill_level: record.skill_level || '',
+        };
+      }
+    });
+  } catch (err) {
+    console.error(`Error loading roster file ${filename}:`, err);
+    return [];
+  }
+}
+
+/**
+ * @swagger
+ * /api/rosters/list:
+ *   get:
+ *     summary: List all roster files
+ *     description: Scans directories for roster CSV files
+ *     tags: [Rosters]
+ *     responses:
+ *       200:
+ *         description: List of roster files
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 rosters:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       filename:
+ *                         type: string
+ *                       path:
+ *                         type: string
+ *                       type:
+ *                         type: string
+ *                         enum: [ai, human, mixed]
+ *                       count:
+ *                         type: number
+ */
+rostersRouter.get('/list', (_req, res) => {
+  const rosterFiles: { filename: string; path: string; type: 'ai' | 'human' | 'mixed'; count: number; location: string }[] = [];
+  const seenPaths = new Set<string>();
+  
+  // Look for roster files in all base directories and their subdirectories
+  for (const baseDir of ROSTER_BASE_DIRS) {
+    if (!fs.existsSync(baseDir)) continue;
+    
+    const scanDir = (dir: string, location: string) => {
+      try {
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+          if (file.endsWith('_roster.csv') || file === 'roster.csv') {
+            const fullPath = path.join(dir, file);
+            if (seenPaths.has(fullPath)) continue;
+            seenPaths.add(fullPath);
+            
+            const entries = loadRosterFile(fullPath);
+            if (entries.length > 0) {
+              const hasAI = entries.some(e => e.type === 'ai');
+              const hasHuman = entries.some(e => e.type === 'human');
+              
+              rosterFiles.push({
+                filename: file,
+                path: fullPath,
+                type: hasAI && hasHuman ? 'mixed' : hasAI ? 'ai' : 'human',
+                count: entries.length,
+                location,
+              });
+            }
+          }
+        }
+      } catch {
+        // Ignore errors
+      }
+    };
+    
+    // Scan base directory
+    scanDir(baseDir, path.basename(baseDir));
+    
+    // Scan subdirectories
+    try {
+      const subdirs = fs.readdirSync(baseDir, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+        .map(d => d.name);
+      
+      for (const subdir of subdirs) {
+        scanDir(path.join(baseDir, subdir), subdir);
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
+  
+  res.json({ rosters: rosterFiles });
+});
+
+/**
+ * @swagger
+ * /api/rosters/ai:
+ *   get:
+ *     summary: Get AI players from roster
+ *     description: Returns AI player definitions from roster file
+ *     tags: [Rosters]
+ *     parameters:
+ *       - in: query
+ *         name: dataset
+ *         schema:
+ *           type: string
+ *         description: Dataset ID to load roster from
+ *     responses:
+ *       200:
+ *         description: AI players
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 players:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       player_id:
+ *                         type: string
+ *                       name:
+ *                         type: string
+ *                       type:
+ *                         type: string
+ *                         enum: [ai]
+ *                       tossup_model:
+ *                         type: string
+ *                       bonus_model:
+ *                         type: string
+ *                 source:
+ *                   type: string
+ */
+rostersRouter.get('/ai', (req, res) => {
+  const dataset = req.query.dataset as string | undefined;
+  
+  let entries: RosterEntry[] = [];
+  
+  if (dataset) {
+    // Try to find roster in dataset directory
+    for (const baseDir of ROSTER_BASE_DIRS) {
+      const datasetPath = path.join(baseDir, dataset, 'ai_roster.csv');
+      if (fs.existsSync(datasetPath)) {
+        entries = loadRosterFile(datasetPath);
+        break;
+      }
+    }
+  }
+  
+  // Fall back to global roster
+  if (entries.length === 0) {
+    entries = loadRosterFile('ai_roster.csv');
+  }
+  
+  res.json({ 
+    players: entries.filter(e => e.type === 'ai'),
+    source: dataset || 'global',
+  });
+});
+
+/**
+ * @swagger
+ * /api/rosters/human:
+ *   get:
+ *     summary: Get human players from roster
+ *     description: Returns human player definitions from roster file
+ *     tags: [Rosters]
+ *     parameters:
+ *       - in: query
+ *         name: dataset
+ *         schema:
+ *           type: string
+ *         description: Dataset ID to load roster from
+ *     responses:
+ *       200:
+ *         description: Human players
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 players:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       player_id:
+ *                         type: string
+ *                       name:
+ *                         type: string
+ *                       type:
+ *                         type: string
+ *                         enum: [human]
+ *                       default_buzzer_key:
+ *                         type: string
+ *                 source:
+ *                   type: string
+ */
+rostersRouter.get('/human', (req, res) => {
+  const dataset = req.query.dataset as string | undefined;
+  
+  let entries: RosterEntry[] = [];
+  
+  if (dataset) {
+    // Try to find roster in dataset directory
+    for (const baseDir of ROSTER_BASE_DIRS) {
+      const datasetPath = path.join(baseDir, dataset, 'human_roster.csv');
+      if (fs.existsSync(datasetPath)) {
+        entries = loadRosterFile(datasetPath);
+        break;
+      }
+    }
+  }
+  
+  // Fall back to global roster
+  if (entries.length === 0) {
+    entries = loadRosterFile('human_roster.csv');
+  }
+  
+  res.json({ 
+    players: entries.filter(e => e.type === 'human'),
+    source: dataset || 'global',
+  });
+});
+
+/**
+ * @swagger
+ * /api/rosters/file/{filename}:
+ *   get:
+ *     summary: Get roster from specific file
+ *     description: Load players from a specific roster CSV file
+ *     tags: [Rosters]
+ *     parameters:
+ *       - in: path
+ *         name: filename
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Roster filename (must be .csv)
+ *     responses:
+ *       200:
+ *         description: Players from file
+ *       400:
+ *         description: Invalid filename
+ */
+rostersRouter.get('/file/:filename', (req, res) => {
+  const { filename } = req.params;
+  
+  // Security: only allow .csv files in the base directory
+  if (!filename.endsWith('.csv') || filename.includes('/') || filename.includes('..')) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+  
+  const entries = loadRosterFile(filename);
+  res.json({ players: entries });
+});
