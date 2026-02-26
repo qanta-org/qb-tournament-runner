@@ -1,8 +1,13 @@
+import { Routes, Route, useLocation } from 'react-router-dom';
 import { GameProvider, useGame } from './context/GameContext';
 import { GameLayout } from './components/layout/GameLayout';
 import { GameSetup } from './components/setup/GameSetup';
 import { RoleSelection } from './components/lobby/RoleSelection';
 import { PlayerView } from './components/player/PlayerView';
+import { TournamentWizard } from './components/tournament/TournamentWizard';
+import { TournamentDashboard } from './components/tournament/TournamentDashboard';
+import { TournamentGameSetup } from './components/tournament/TournamentGameSetup';
+import { BracketSandbox } from './components/test/BracketSandbox';
 
 function AppContent() {
   const {
@@ -15,33 +20,64 @@ function AppContent() {
     error,
     clearError
   } = useGame();
+  const location = useLocation();
 
-  // Step 1: Not connected yet - show in role selection screen
-  // Step 2: No role selected - show role selection
-  if (!clientRole || !roomCode) {
-    return <RoleSelection />;
+  // When in a game (have room and role), show game flow regardless of route
+  if (clientRole && roomCode) {
+    return <GameFlow />;
   }
 
-  // Step 3: Player role - show player view
+  // Test / sandbox routes
+  if (location.pathname === '/test/brackets') {
+    return <BracketSandbox />;
+  }
+
+  // Tournament routes
+  if (location.pathname.startsWith('/tournament/new')) {
+    return <TournamentWizard />;
+  }
+  const tournamentMatch = location.pathname.match(/^\/tournament\/([A-Za-z0-9]+)$/);
+  if (tournamentMatch) {
+    return <TournamentDashboard code={tournamentMatch[1]} />;
+  }
+
+  // Default: role selection
+  return <RoleSelection />;
+}
+
+function GameFlow() {
+  const {
+    gameState,
+    gameConfig,
+    clientRole,
+    roomCode,
+    playerCount,
+    tournamentContext,
+  } = useGame();
+
+  // Player role - show player view
   if (clientRole === 'player') {
     return <PlayerView />;
   }
 
-  // Step 4: Moderator role - show moderator views
-  // Show setup if game not started
+  // Moderator: game not started yet — show setup
   if (gameState.phase === 'setup' || !gameConfig) {
+    // Tournament game: show simplified pre-game config
+    if (tournamentContext && gameConfig) {
+      return <TournamentGameSetup tournamentContext={tournamentContext} />;
+    }
+    // Regular game: show full setup wizard
     return (
       <ModeratorSetupWrapper
-        roomCode={roomCode}
+        roomCode={roomCode ?? ''}
         playerCount={playerCount}
       />
     );
   }
 
-  // Show game
   return (
     <ModeratorGameWrapper
-      roomCode={roomCode}
+      roomCode={roomCode ?? ''}
       playerCount={playerCount}
     />
   );
@@ -154,7 +190,9 @@ function ModeratorGameWrapper({
 export default function App() {
   return (
     <GameProvider>
-      <AppContent />
+      <Routes>
+        <Route path="*" element={<AppContent />} />
+      </Routes>
     </GameProvider>
   );
 }

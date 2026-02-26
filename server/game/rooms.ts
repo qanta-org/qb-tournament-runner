@@ -11,6 +11,9 @@ export interface GameRoom {
   gameConfig: GameConfig | null;
   gameState: GameState | null;
   createdAt: Date;
+  /** Set when game is started from a tournament */
+  tournamentGameId?: string;
+  tournamentCode?: string;
 }
 
 // ============================================================================

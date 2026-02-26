@@ -139,12 +139,13 @@ export function GameSetup() {
   };
 
   const STEPS: SetupStep[] = ['files', 'teams', 'settings', 'review'];
-  const STEP_LABELS = {
-    files: '1. Load Data',
-    teams: '2. Configure Teams',
-    settings: '3. Settings',
-    review: '4. Review',
+  const STEP_LABELS: Record<SetupStep, string> = {
+    files: 'Load Data',
+    teams: 'Configure Teams',
+    settings: 'Settings',
+    review: 'Review',
   };
+  const stepIndex = STEPS.indexOf(step);
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
@@ -161,8 +162,25 @@ export function GameSetup() {
         </div>
 
         {/* Progress indicator */}
-        <div className="flex justify-center mb-8">
-          <div className="flex items-center gap-2">
+        <div className="mb-8">
+          <div className="flex gap-2 mb-2">
+            {STEPS.map((s, i) => (
+              <button
+                key={s}
+                onClick={() => setStep(s)}
+                className={`flex-1 text-xs font-medium text-center transition-colors ${
+                  i === stepIndex
+                    ? 'text-blue-700'
+                    : i < stepIndex
+                      ? 'text-blue-500 hover:text-blue-700'
+                      : 'text-gray-400 hover:text-gray-600'
+                } cursor-pointer`}
+              >
+                {STEP_LABELS[s]}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 justify-center">
             {STEPS.map((s, i) => (
               <div key={s} className="flex items-center">
                 <button
@@ -170,12 +188,16 @@ export function GameSetup() {
                   className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
                     step === s
                       ? 'bg-blue-600 text-white'
-                      : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                      : i < stepIndex
+                        ? 'bg-blue-200 text-blue-700 hover:bg-blue-300'
+                        : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
                   }`}
                 >
                   {i + 1}
                 </button>
-                {i < STEPS.length - 1 && <div className="w-8 h-0.5 bg-gray-200" />}
+                {i < STEPS.length - 1 && (
+                  <div className={`w-8 h-0.5 ${i < stepIndex ? 'bg-blue-300' : 'bg-gray-200'}`} />
+                )}
               </div>
             ))}
           </div>

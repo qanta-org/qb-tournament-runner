@@ -18,6 +18,7 @@ A web-based Quiz Bowl buzzer system for human-AI hybrid competitions.
 - Configurable scoring (power points, penalties, bonus questions)
 - Tournament and simple dataset formats
 - Roster management with model validation
+- **Tournament bracket system**: Multi-game tournaments with round robin, playoffs, and standings
 - **Auto-generated API documentation**: Swagger UI for all REST endpoints
 
 ## Client Types
@@ -54,6 +55,81 @@ Open **http://localhost:5173** in your browser.
 3. **Players**: Click "Join as Viewer" and enter the room code
 4. **Moderator**: Configure teams, load data, and start the game
 5. **Play**: All connected clients see the game in real-time
+
+### Starting a Tournament
+
+1. **Moderator**: Click "Start a Tournament" to open the Tournament Wizard
+2. **Wizard**: Select dataset, teams (from human roster), AI assignments, format, and game settings
+3. **Create**: Review schedule and create tournament — receive a 6-character tournament code (e.g. `TRN123`)
+4. **Dashboard**: View schedule and standings; click "Start Game" on any ready game
+5. **Play**: Games run like single-game sessions; use "Back to Tournament Dashboard" when done
+6. **Multi-moderator**: Share the tournament code — any moderator can join and run games in parallel
+
+---
+
+## Tournament System
+
+The tournament system orchestrates multiple games between pre-defined teams, tracking standings and bracket progression. Teams come from the human roster (grouped by the `team` column); games use the existing room/engine infrastructure.
+
+### Tournament Formats
+
+| Format | Description | Use Case |
+|--------|-------------|----------|
+| **Round Robin** | Every team plays every other team once | Fair for small tournaments (4–8 teams) |
+| **Round Robin + Single Elimination** | Prelims followed by playoffs | Top N advance to semifinals and final |
+| **Single Elimination** | Lose once, you're out | Quick bracket-only tournaments |
+| **Grouped Prelims** | Split into groups; round robin within each | Shorter prelim phase (e.g. 2 groups of 4 = 3 rounds each) |
+
+### Tournament Wizard (6 Steps)
+
+1. **Dataset & Packets** — Choose dataset; select packets. Total games must not exceed available packets.
+2. **Teams** — Teams auto-grouped from human roster `team` column; enable/disable teams.
+3. **AI Assignment** — Optionally add AI players per team. No player on both teams in any game.
+4. **Format** — Round Robin only, Round Robin + Single Elim, or Single Elim. Option for grouped prelims.
+5. **Game Settings** — Powers, negs, bonus points (reused from single-game setup).
+6. **Review & Create** — Schedule preview; create tournament; receive 6-char code.
+
+### Tournament Dashboard
+
+- **Schedule tab**: Games grouped by round and phase (Prelim Round 1, Semifinals, Final). Each game shows teams, packet, status (Scheduled | Ready | In Progress | Completed), and "Start Game" when ready.
+- **Standings tab**: W/L, points for/against, sorted by wins then point differential.
+- **Round ordering**: Round 2 games are locked until all Round 1 games complete; playoffs unlock after prelims.
+- **Multi-moderator**: Any moderator with the code can start ready games; server prevents duplicate starts.
+
+### Tournament Game Flow
+
+1. Moderator clicks "Start Game" on a ready game in the dashboard.
+2. Server creates a room, populates teams from the tournament, and emits `room:created` (with `tournamentCode`, `round`, `matchNumber`).
+3. Game runs normally; in-game header shows "Round X, Match Y – Team A vs Team B".
+4. On game end, standings update automatically; "Back to Tournament Dashboard" returns to schedule.
+5. Playoff games (for Round Robin + Single Elim) become ready after prelims; seeds are computed from standings.
+
+### Tournament API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|--------------|
+| `/api/tournaments/list` | GET | List active tournaments |
+| `/api/tournaments/:code` | GET | Get tournament details |
+| `/api/tournaments` | POST | Create tournament |
+
+### Tournament WebSocket Events
+
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `tournament:create` | Client → Server | Create tournament; callback returns `{ code }` |
+| `tournament:get` | Client → Server | Get tournament by code; callback returns `{ tournament }` |
+| `tournament:start_game` | Client → Server | Start a tournament game; server creates room, emits `room:created` |
+| `room:created` | Server → Client | Extended with `tournamentCode`, `round`, `matchNumber` for tournament games |
+
+### Tournament Architecture
+
+- **TournamentManager** (`server/game/tournaments.ts`): In-memory storage; creates tournaments; generates schedules; tracks results.
+- **Pluggable schedule generators**: Full round robin, grouped round robin, playoff placeholders. Each produces `TournamentGame[]`; game execution is identical regardless of structure.
+- **Game integration**: Rooms created from tournaments have `tournamentGameId`; on game over, handlers call `completeGame` to update standings.
+
+> **📋 Bracket workflow**: For the full bracket creation workflow including user decisions, see [`docs/BRACKET_WORKFLOW.md`](./docs/BRACKET_WORKFLOW.md).
+>
+> **📋 Implementation details**: For the full implementation plan, action items, and spec alignment, see [`tasks/implementation-plan.md`](./tasks/implementation-plan.md) and [`tasks/action-items.md`](./tasks/action-items.md).
 
 ---
 
@@ -224,6 +300,11 @@ The Swagger UI provides interactive documentation where you can explore and test
 - `GET /api/rosters/ai?dataset=ID` - Get AI players (optionally from dataset)
 - `GET /api/rosters/human?dataset=ID` - Get human players
 
+### Tournaments
+- `GET /api/tournaments/list` - List active tournaments
+- `GET /api/tournaments/:code` - Get tournament details (schedule, standings)
+- `POST /api/tournaments` - Create tournament (body: name, format, datasetId, teams, packets, etc.)
+
 ### Files
 - `POST /api/files/upload` - Upload question/response files
 - `GET /api/files/list` - List uploaded files
@@ -242,6 +323,11 @@ The Swagger UI provides interactive documentation where you can explore and test
 - `room:leave` - Leave current room
 - `room:player_count` - Moderator receives player count updates
 - `room:error` - Room-related errors
+
+### Tournament Events
+- `tournament:create` - Create tournament; callback returns `{ code }`
+- `tournament:get` - Get tournament by code; callback returns `{ tournament }`
+- `tournament:start_game` - Start a tournament game; server creates room, emits `room:created` (with `tournamentCode`, `round`, `matchNumber`)
 
 ### Game Events (Client → Server)
 - `game:start` - Start a new game with config (moderator only)
@@ -442,7 +528,9 @@ sequenceDiagram
 
 | Component | Moderator | Player/Spectator | Code Location |
 |-----------|:---------:|:----------------:|---------------|
-| **Role Selection** | ✅ Creates room | ✅ Joins room | `client/src/components/lobby/RoleSelection.tsx` |
+| **Role Selection** | ✅ Creates room / Start Tournament | ✅ Joins room / Join Tournament | `client/src/components/lobby/RoleSelection.tsx` |
+| **Tournament Wizard** | ✅ Create tournament | ❌ | `client/src/components/tournament/TournamentWizard.tsx` |
+| **Tournament Dashboard** | ✅ Schedule, standings, start games | ❌ | `client/src/components/tournament/TournamentDashboard.tsx` |
 | **Game Setup Wizard** | ✅ Full access | ❌ | `client/src/components/setup/GameSetup.tsx` |
 | **File/Dataset Loader** | ✅ | ❌ | `client/src/components/setup/FileUploader.tsx` |
 | **Team Builder** | ✅ | ❌ | `client/src/components/setup/TeamBuilder.tsx` |
@@ -472,6 +560,7 @@ buzzer-web/
 │   │   │   ├── lobby/          # Role selection screen
 │   │   │   ├── navigation/     # Question navigation sidebar
 │   │   │   ├── player/         # Player/spectator view
+│   │   │   ├── tournament/     # Tournament wizard & dashboard
 │   │   │   ├── question/       # Tossup question display
 │   │   │   ├── scoreboard/     # Team panels and scores
 │   │   │   └── setup/          # Game setup wizard
@@ -493,12 +582,15 @@ buzzer-web/
 │   ├── game/
 │   │   ├── engine.ts           # Game state machine
 │   │   ├── handlers.ts         # Socket.io event handlers
-│   │   └── rooms.ts            # Room management (join codes)
+│   │   ├── rooms.ts            # Room management (join codes)
+│   │   ├── tournaments.ts      # Tournament manager (schedules, standings)
+│   │   └── tournament-handlers.ts  # Tournament socket handlers
 │   ├── routes/
 │   │   ├── config.ts           # Game config API
 │   │   ├── datasets.ts         # Dataset listing & validation
 │   │   ├── files.ts            # File upload handling
-│   │   └── rosters.ts          # Player roster API
+│   │   ├── rosters.ts          # Player roster API
+│   │   └── tournaments.ts      # Tournament REST API
 │   ├── swagger.ts              # Swagger/OpenAPI documentation config
 │   └── index.ts                # Server entry (Express + Socket.io)
 │
@@ -531,12 +623,15 @@ This section helps developers understand where different functionality lives and
 
 #### UI Components by Category
 
-**Lobby & Setup** (`components/lobby/`, `components/setup/`)
-- **`lobby/RoleSelection.tsx`**: Initial screen for choosing moderator or player role
+**Lobby & Setup** (`components/lobby/`, `components/setup/`, `components/tournament/`)
+- **`lobby/RoleSelection.tsx`**: Initial screen for choosing moderator, player, or tournament (Start a Tournament, Join Tournament)
 - **`setup/GameSetup.tsx`**: Multi-step wizard for configuring game (datasets, teams, players)
 - **`setup/FileUploader.tsx`**: File upload interface for questions/responses
 - **`setup/TeamBuilder.tsx`**: Team configuration with player selection (AI/human)
   - **When to modify**: Changing setup flow, adding new configuration options
+- **`tournament/TournamentWizard.tsx`**: 6-step wizard for creating tournaments (dataset, teams, AI, format, settings, review)
+- **`tournament/TournamentDashboard.tsx`**: Schedule and standings; start games; "Back to Tournament" from game over
+  - **When to modify**: Changing tournament flow, adding new bracket formats
 
 **Game Display** (`components/layout/`, `components/question/`, `components/bonus/`)
 - **`layout/GameLayout.tsx`**: Main moderator game view layout
@@ -643,6 +738,20 @@ This section helps developers understand where different functionality lives and
   - Caches game state and config per room
   - **When to modify**: Changing room creation logic, join code generation
 
+**`game/tournaments.ts`** - Tournament Manager
+- **`TournamentManager` class**: Manages tournament lifecycle
+  - Creates tournaments with 6-character codes
+  - Generates schedules (full round robin, grouped prelims, playoff placeholders)
+  - Tracks game results and standings
+  - `startGame()`: Creates room from tournament game, populates teams
+  - `completeGame()`: Updates game status and standings on game over
+  - **When to modify**: Adding new bracket formats, changing schedule generation
+
+**`game/tournament-handlers.ts`** - Tournament Socket Handlers
+- Handles `tournament:create`, `tournament:get`, `tournament:start_game`
+- Integrates with room creation and game engine
+  - **When to modify**: Adding new tournament events
+
 #### Data Layer (`server/data/`)
 
 **`data/questions.ts`** - Question Loading
@@ -676,6 +785,10 @@ This section helps developers understand where different functionality lives and
 - Loads rosters from CSV files
 - **When to modify**: Changing roster format, adding new roster fields
 
+**`routes/tournaments.ts`**: Tournament REST API
+- List, get, and create tournaments
+- **When to modify**: Adding new tournament endpoints
+
 **`routes/config.ts`**: Game configuration API
 - Default game settings
 - Configuration updates
@@ -701,6 +814,7 @@ This section helps developers understand where different functionality lives and
   - `TossupQuestion`, `BonusQuestion`: Question structures
   - `TossupResponse`, `BonusResponse`: AI response structures
   - `QuestionResult`: Question outcome tracking for navigation (includes `previousScore` for replay)
+  - `Tournament`, `TournamentGame`, `TournamentTeam`, `TeamStanding`: Tournament structures
   - `ClientToServerEvents`, `ServerToClientEvents`: Socket.io event types
 - **When to modify**: Adding new state fields, changing data structures, adding new events
 
@@ -783,6 +897,12 @@ The engine properly cleans up state when transitioning between phases:
 3. Add JSDoc comments for Swagger documentation
 4. Add types in `shared/types.ts` if needed
 
+#### Adding a New Tournament Bracket Format
+1. Add generator in `server/game/tournaments.ts` (e.g. `generateSwissGames()`)
+2. Add format option to `TournamentFormat` in `shared/types.ts`
+3. Add wizard step/option in `TournamentWizard.tsx` for the new format
+4. Update `CreateTournamentParams` and `createTournament()` to handle the new format
+
 #### Changing Question Display Format
 - **Moderator view**: `client/src/components/question/QuestionDisplay.tsx` or `bonus/BonusDisplay.tsx`
 - **Player view**: `client/src/components/player/PlayerView.tsx`
@@ -814,3 +934,12 @@ The engine properly cleans up state when transitioning between phases:
 - Check server is running on port 3001
 - Check browser console for CORS errors
 - Verify `VITE_SOCKET_URL` if deploying to different domain
+
+### Tournament creation fails ("Total games exceeds packets")
+- Ensure number of scheduled games ≤ number of selected packets
+- Round robin: n teams → n(n−1)/2 games (e.g. 5 teams = 10 games)
+- Round robin + playoffs: prelim games + 3 (2 semifinals + 1 final)
+
+### Tournament game won't start
+- Round 2+ games require all previous round games to be completed
+- Playoff games require all prelim games completed and seeds computed

@@ -11,6 +11,14 @@ import type {
 } from '../../../shared/types';
 import { createInitialGameState, DEFAULT_APP_CONFIG } from '../../../shared/types';
 
+export interface TournamentContext {
+  tournamentCode: string;
+  round: number;
+  matchNumber: number;
+  teamAName: string;
+  teamBName: string;
+}
+
 interface GameContextValue {
   // Connection & Role
   isConnected: boolean;
@@ -18,6 +26,9 @@ interface GameContextValue {
   roomCode: string | null;
   playerCount: number;
   error: string | null;
+
+  // Tournament context (set when game started from tournament)
+  tournamentContext: TournamentContext | null;
 
   // State
   gameState: GameState;
@@ -81,6 +92,7 @@ export function GameProvider({ children }: GameProviderProps) {
   const [clientRole, setClientRole] = useState<ClientRole | null>(null);
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [playerCount, setPlayerCount] = useState(0);
+  const [tournamentContext, setTournamentContext] = useState<TournamentContext | null>(null);
 
   // Reference to track clientRole for sound handler without causing re-renders
   const clientRoleRef = React.useRef<ClientRole | null>(null);
@@ -114,11 +126,33 @@ export function GameProvider({ children }: GameProviderProps) {
     };
 
     // Room events
-    const onRoomCreated = (data: { code: string; role: ClientRole }) => {
+    const onRoomCreated = (data: {
+      code: string;
+      role: ClientRole;
+      tournamentCode?: string;
+      round?: number;
+      matchNumber?: number;
+      teamAName?: string;
+      teamBName?: string;
+    }) => {
       setRoomCode(data.code);
       setClientRole(data.role);
       setError(null);
-      console.log(`Room created: ${data.code}, role: ${data.role}`);
+
+      // Store tournament context if present
+      if (data.tournamentCode) {
+        setTournamentContext({
+          tournamentCode: data.tournamentCode,
+          round: data.round ?? 0,
+          matchNumber: data.matchNumber ?? 0,
+          teamAName: data.teamAName ?? '',
+          teamBName: data.teamBName ?? '',
+        });
+      } else {
+        setTournamentContext(null);
+      }
+
+      console.log(`Room created: ${data.code}, role: ${data.role}${data.tournamentCode ? ` (tournament ${data.tournamentCode})` : ''}`);
     };
 
     const onRoomJoined = (data: { code: string; role: ClientRole; config: GameConfig | null }) => {
@@ -183,6 +217,7 @@ export function GameProvider({ children }: GameProviderProps) {
     setGameConfig(null);
     setGameState(createInitialGameState());
     setPlayerCount(0);
+    setTournamentContext(null);
   }, []);
 
   // Game Actions
@@ -297,6 +332,9 @@ export function GameProvider({ children }: GameProviderProps) {
     roomCode,
     playerCount,
     error,
+
+    // Tournament
+    tournamentContext,
 
     // State
     gameState,

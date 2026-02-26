@@ -214,6 +214,118 @@ export interface GameState {
 }
 
 // ============================================
+// Tournament Types
+// ============================================
+
+/** Prelim phase structure: no prelims, full RR, double RR, or grouped RR */
+export type PrelimStructure = 'none' | 'full_rr' | 'double_rr' | 'grouped_rr';
+
+/** Qualifier phase (only when prelims are grouped): direct to playoffs or RR among qualifiers */
+export type QualifierPhase = { kind: 'none' } | { kind: 'rr' };
+
+/** Playoff structure: none or single elimination (future: double_elim) */
+export type PlayoffStructure = 'none' | 'single_elim';
+
+/** Structured tournament format: prelim → optional qualifiers → playoffs */
+export interface TournamentFormat {
+  prelim: PrelimStructure;
+  qualifiers: QualifierPhase;
+  playoffs: PlayoffStructure;
+}
+
+export type TournamentGameStatus = 'scheduled' | 'ready' | 'in_progress' | 'completed';
+
+/** Tournament phase: prelims → qualifiers (optional) → playoffs → completed */
+export type TournamentPhase = 'prelims' | 'qualifiers' | 'playoffs' | 'completed';
+
+export interface PacketInfo {
+  id: string;
+  name: string;
+  tossupFile: string;
+  bonusFile?: string;
+  tossupCount?: number;
+  bonusCount?: number;
+}
+
+export interface TournamentTeam {
+  id: string;
+  name: string;
+  humanPlayers: Player[];
+  aiPlayers: Player[];
+  group?: string;
+}
+
+export interface TournamentGame {
+  id: string;
+  round: number;
+  matchNumber: number;
+  phase: TournamentPhase;
+  teamAId: string;
+  teamBId: string;
+  packetId: string;
+  packetPath?: string;
+  status: TournamentGameStatus;
+  roomCode?: string;
+  scores?: { team_a: number; team_b: number };
+  winnerId?: string;
+  dependsOn?: string[];
+  tag?: string;
+  group?: string;
+}
+
+export interface TeamStanding {
+  teamId: string;
+  wins: number;
+  losses: number;
+  pointsFor: number;
+  pointsAgainst: number;
+  negs: number;
+  bonusPoints: number;
+  bonusAttempts: number;
+  group?: string;
+}
+
+export interface Tournament {
+  code: string;
+  name: string;
+  format: TournamentFormat;
+  status: 'draft' | 'active' | 'completed';
+  phase: TournamentPhase;
+  datasetId: string;
+  packets: PacketInfo[];
+  teams: TournamentTeam[];
+  games: TournamentGame[];
+  standings: TeamStanding[];
+  gameSettings: Partial<GameConfig>;
+  modelDirectory: string;
+  createdBy: string;
+  createdAt: Date;
+  topNForPlayoffs?: number;
+  playoffBracketSize?: 2 | 4 | 8;
+  numGroups?: number;
+  groupAssignments?: Record<string, string[]>;
+  advancePerGroup?: number;
+}
+
+export interface CreateTournamentParams {
+  name: string;
+  format: TournamentFormat;
+  datasetId: string;
+  /** Teams with human and AI players (wizard builds from roster) */
+  teams: TournamentTeam[];
+  /** Packets with full paths (from dataset) */
+  packets: PacketInfo[];
+  /** Path to model responses directory */
+  modelDirectory: string;
+  gameSettings: Partial<GameConfig>;
+  topNForPlayoffs?: number;
+  playoffBracketSize?: 2 | 4 | 8;
+  numGroups?: number;
+  groupAssignments?: Record<string, string[]>;
+  advancePerGroup?: number;
+}
+
+// ============================================
 // WebSocket Event Types
 // ============================================
 
@@ -258,7 +370,15 @@ export interface CycleRecord {
 // Server -> Client events
 export interface ServerToClientEvents {
   // Room events
-  'room:created': (data: { code: string; role: ClientRole }) => void;
+  'room:created': (data: {
+    code: string;
+    role: ClientRole;
+    tournamentCode?: string;
+    round?: number;
+    matchNumber?: number;
+    teamAName?: string;
+    teamBName?: string;
+  }) => void;
   'room:joined': (data: { code: string; role: ClientRole; config: GameConfig | null }) => void;
   'room:error': (message: string) => void;
   'room:player_count': (count: number) => void;
@@ -310,6 +430,10 @@ export interface ClientToServerEvents {
   // Question navigation
   'moderator:play_tossup': (tossupIndex: number) => void;
   'moderator:play_bonus': (data: { bonusIndex: number; owner: TeamId }) => void;
+  // Tournament events
+  'tournament:create': (params: CreateTournamentParams, callback?: (res: { code?: string; error?: string }) => void) => void;
+  'tournament:get': (code: string, callback?: (res: { tournament?: Tournament; error?: string }) => void) => void;
+  'tournament:start_game': (data: { code: string; gameId: string }, callback?: (res: { roomCode?: string; error?: string }) => void) => void;
 }
 
 // ============================================

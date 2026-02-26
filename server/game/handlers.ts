@@ -8,15 +8,63 @@ import type {
 } from '../../shared/types.js';
 import { filterStateForPlayer } from '../../shared/types.js';
 import { GameEngine } from './engine.js';
-import { roomManager } from './rooms.js';
-
-// Store game engines per room
-const gameEngines = new Map<string, GameEngine>();
+import { roomManager, type GameRoom } from './rooms.js';
+import { gameEngines } from './engines.js';
+import { tournamentManager } from './tournaments.js';
 
 /**
- * Emit state to all clients in a room, filtering appropriately by role
+ * When a tournament game reaches game_over, compute winner/stats and call completeGame.
+ * Called from emitStateToRoom so tournament completion is a clear, separate responsibility.
  */
-function emitStateToRoom(
+function handleTournamentGameCompletionIfNeeded(room: GameRoom, state: GameState): void {
+  if (state.phase !== 'game_over' || !room.tournamentGameId || !room.tournamentCode) return;
+  const t = tournamentManager.getTournament(room.tournamentCode);
+  const game = t?.games.find((g) => g.id === room.tournamentGameId);
+  if (!t || !game) return;
+
+  const { team_a, team_b } = state.scores;
+  const winnerId = team_a > team_b ? game.teamAId : team_b > team_a ? game.teamBId : undefined;
+
+  let negsA = 0, negsB = 0;
+  let bonusPtsA = 0, bonusPtsB = 0;
+  let bonusAttA = 0, bonusAttB = 0;
+  for (const r of state.tossupResults) {
+    if (r.previousScore) {
+      if (r.previousScore.team_a < 0) negsA++;
+      if (r.previousScore.team_b < 0) negsB++;
+    }
+  }
+  for (const r of state.bonusResults) {
+    if (r.outcome === 'team_a' || r.outcome === 'team_b') {
+      const pts = r.previousScore;
+      if (r.outcome === 'team_a') {
+        bonusAttA++;
+        if (pts) bonusPtsA += pts.team_a;
+      } else {
+        bonusAttB++;
+        if (pts) bonusPtsB += pts.team_b;
+      }
+    }
+  }
+
+  tournamentManager.completeGame(
+    room.tournamentCode,
+    room.tournamentGameId,
+    state.scores,
+    winnerId,
+    {
+      negs: { team_a: negsA, team_b: negsB },
+      bonusPoints: { team_a: bonusPtsA, team_b: bonusPtsB },
+      bonusAttempts: { team_a: bonusAttA, team_b: bonusAttB },
+    }
+  );
+}
+
+/**
+ * Emit state to all clients in a room, filtering appropriately by role.
+ * Delegates tournament game completion to handleTournamentGameCompletionIfNeeded when phase is game_over.
+ */
+export function emitStateToRoom(
   io: Server<ClientToServerEvents, ServerToClientEvents>,
   roomCode: string,
   state: GameState
@@ -24,17 +72,16 @@ function emitStateToRoom(
   const room = roomManager.getRoom(roomCode);
   if (!room) return;
 
-  // Send full state to moderator
   io.to(room.moderatorId).emit('game:state', state);
 
-  // Send filtered state to players
   const filteredState = filterStateForPlayer(state);
   room.playerIds.forEach(playerId => {
     io.to(playerId).emit('game:state', filteredState);
   });
 
-  // Update room's cached state
   roomManager.setGameState(roomCode, state);
+
+  handleTournamentGameCompletionIfNeeded(room, state);
 }
 
 /**
@@ -49,10 +96,7 @@ function emitToRoom(
   const room = roomManager.getRoom(roomCode);
   if (!room) return;
 
-  // Emit to moderator
   (io.to(room.moderatorId).emit as any)(event, ...args);
-
-  // Emit to all players
   room.playerIds.forEach(playerId => {
     (io.to(playerId).emit as any)(event, ...args);
   });
@@ -75,9 +119,6 @@ function emitToPlayers(
   });
 }
 
-/**
- * Emit player count update to moderator
- */
 function notifyPlayerCount(
   io: Server<ClientToServerEvents, ServerToClientEvents>,
   roomCode: string
@@ -93,19 +134,13 @@ export function setupGameHandlers(
   io: Server<ClientToServerEvents, ServerToClientEvents>,
   socket: Socket<ClientToServerEvents, ServerToClientEvents>
 ) {
-  // =========================================================================
-  // Room Management
-  // =========================================================================
-
-  // Moderator creates a room
   socket.on('room:create', () => {
     const room = roomManager.createRoom(socket.id);
-    socket.join(room.code); // Join socket.io room for broadcasts
+    socket.join(room.code);
     socket.emit('room:created', { code: room.code, role: 'moderator' });
     console.log(`Room ${room.code} created, moderator: ${socket.id}`);
   });
 
-  // Player joins a room
   socket.on('room:join', (code: string) => {
     const room = roomManager.joinRoom(socket.id, code);
 
@@ -114,14 +149,13 @@ export function setupGameHandlers(
       return;
     }
 
-    socket.join(room.code); // Join socket.io room
+    socket.join(room.code);
     socket.emit('room:joined', {
       code: room.code,
       role: 'player',
       config: room.gameConfig,
     });
 
-    // Send current game state if game is in progress
     if (room.gameState) {
       socket.emit('game:state', filterStateForPlayer(room.gameState));
     }
@@ -129,33 +163,23 @@ export function setupGameHandlers(
       socket.emit('game:config', room.gameConfig);
     }
 
-    // Notify moderator of player count change
     notifyPlayerCount(io, room.code);
     console.log(`Player ${socket.id} joined room ${room.code}`);
   });
 
-  // Leave room
   socket.on('room:leave', () => {
     const room = roomManager.getRoomForSocket(socket.id);
     if (room) {
-      const wasPlayerCount = roomManager.getPlayerCount(room.code);
       socket.leave(room.code);
       roomManager.leaveRoom(socket.id);
 
-      // If room still exists (player left, not moderator), notify
       if (roomManager.getRoom(room.code)) {
         notifyPlayerCount(io, room.code);
       }
     }
   });
 
-  // =========================================================================
-  // Game Events (Moderator Only)
-  // =========================================================================
-
-  // Start a new game
   socket.on('game:start', async (config: GameConfig) => {
-    // Verify caller is a moderator
     if (!roomManager.isModerator(socket.id)) {
       socket.emit('error', 'Only the moderator can start the game');
       return;
@@ -170,14 +194,12 @@ export function setupGameHandlers(
     try {
       console.log(`Starting game in room ${room.code}: ${config.team_a.name} vs ${config.team_b.name}`);
 
-      // Clean up existing engine for this room
       const existingEngine = gameEngines.get(room.code);
       if (existingEngine) {
         existingEngine.cleanup();
       }
 
       const engine = new GameEngine(config, (state) => {
-        // Add room code to state
         state.roomCode = room.code;
         emitStateToRoom(io, room.code, state);
       });
@@ -185,19 +207,15 @@ export function setupGameHandlers(
       await engine.initialize();
       gameEngines.set(room.code, engine);
 
-      // Store config in room
       roomManager.setGameConfig(room.code, config);
 
-      // Send config to all clients
       io.to(room.moderatorId).emit('game:config', config);
       emitToPlayers(io, room.code, 'game:config', config);
 
-      // Send initial state
       const initialState = engine.getState();
       initialState.roomCode = room.code;
       emitStateToRoom(io, room.code, initialState);
 
-      // Start the first question
       engine.startGame();
     } catch (error) {
       console.error('Error starting game:', error);
@@ -205,7 +223,6 @@ export function setupGameHandlers(
     }
   });
 
-  // Moderator advances to next word (manual mode)
   socket.on('moderator:next_word', () => {
     if (!roomManager.isModerator(socket.id)) return;
 
@@ -213,30 +230,22 @@ export function setupGameHandlers(
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) {
-      engine.revealNextWord();
-    }
+    if (engine) engine.revealNextWord();
   });
 
-  // Player buzzes (can be triggered by moderator for human players)
   socket.on('player:buzz', (playerId: string) => {
     const room = roomManager.getRoomForSocket(socket.id);
     if (!room) return;
 
-    // Only moderator can trigger buzzes (human players buzz via moderator's keyboard)
     if (!roomManager.isModerator(socket.id)) return;
 
     const engine = gameEngines.get(room.code);
     if (engine) {
       const result = engine.handleBuzz(playerId);
-      if (result.buzzed) {
-        // Only play sound on moderator
-        socket.emit('sound:buzz');
-      }
+      if (result.buzzed) socket.emit('sound:buzz');
     }
   });
 
-  // Moderator rules on answer
   socket.on('moderator:answer_ruling', (data: { ruling: AnswerRuling; answer: string }) => {
     if (!roomManager.isModerator(socket.id)) return;
 
@@ -244,12 +253,9 @@ export function setupGameHandlers(
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) {
-      engine.handleAnswerRuling(data.ruling, data.answer);
-    }
+    if (engine) engine.handleAnswerRuling(data.ruling, data.answer);
   });
 
-  // Play specific tossup (from navigation sidebar)
   socket.on('moderator:play_tossup', (tossupIndex: number) => {
     if (!roomManager.isModerator(socket.id)) return;
 
@@ -257,12 +263,9 @@ export function setupGameHandlers(
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) {
-      engine.playTossup(tossupIndex);
-    }
+    if (engine) engine.playTossup(tossupIndex);
   });
 
-  // Play specific bonus (from navigation sidebar)
   socket.on('moderator:play_bonus', (data: { bonusIndex: number; owner: 'team_a' | 'team_b' }) => {
     if (!roomManager.isModerator(socket.id)) return;
 
@@ -270,12 +273,9 @@ export function setupGameHandlers(
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) {
-      engine.playBonus(data.bonusIndex, data.owner);
-    }
+    if (engine) engine.playBonus(data.bonusIndex, data.owner);
   });
 
-  // Adjust points
   socket.on('moderator:adjust_points', (data: { team_a: number; team_b: number }) => {
     if (!roomManager.isModerator(socket.id)) return;
 
@@ -283,13 +283,9 @@ export function setupGameHandlers(
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) {
-      engine.adjustPoints(data);
-      // State will be emitted via the engine callback
-    }
+    if (engine) engine.adjustPoints(data);
   });
 
-  // Mute/unmute player
   socket.on('player:mute_toggle', (playerId: string) => {
     if (!roomManager.isModerator(socket.id)) return;
 
@@ -297,12 +293,9 @@ export function setupGameHandlers(
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) {
-      engine.toggleMute(playerId);
-    }
+    if (engine) engine.toggleMute(playerId);
   });
 
-  // Bonus: Advance stage
   socket.on('bonus:advance', () => {
     if (!roomManager.isModerator(socket.id)) return;
 
@@ -310,12 +303,9 @@ export function setupGameHandlers(
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) {
-      engine.advanceBonusStage();
-    }
+    if (engine) engine.advanceBonusStage();
   });
 
-  // Bonus: Human response
   socket.on('bonus:human_response', (responses: Record<string, string>) => {
     if (!roomManager.isModerator(socket.id)) return;
 
@@ -323,12 +313,9 @@ export function setupGameHandlers(
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) {
-      engine.handleBonusHumanResponse(responses);
-    }
+    if (engine) engine.handleBonusHumanResponse(responses);
   });
 
-  // Bonus: Final answer
   socket.on('bonus:final_answer', (answer: string) => {
     if (!roomManager.isModerator(socket.id)) return;
 
@@ -336,16 +323,9 @@ export function setupGameHandlers(
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) {
-      engine.handleBonusFinalAnswer(answer);
-    }
+    if (engine) engine.handleBonusFinalAnswer(answer);
   });
 
-  // =========================================================================
-  // Player Management (Mid-Game)
-  // =========================================================================
-
-  // Add a human player mid-game
   socket.on('moderator:add_player', (data: { teamId: 'team_a' | 'team_b'; player: any }, callback?: (result: { success: boolean; error?: string }) => void) => {
     if (!roomManager.isModerator(socket.id)) {
       callback?.({ success: false, error: 'Not authorized' });
@@ -367,18 +347,14 @@ export function setupGameHandlers(
     const result = engine.addPlayer(data.teamId, data.player);
 
     if (result.success) {
-      // Update room config
       const updatedConfig = engine.getConfig();
       roomManager.setGameConfig(room.code, updatedConfig);
-
-      // Broadcast updated config to all clients
       emitToRoom(io, room.code, 'game:config', updatedConfig);
     }
 
     callback?.(result);
   });
 
-  // Remove a human player mid-game
   socket.on('moderator:remove_player', (playerId: string, callback?: (result: { success: boolean; error?: string }) => void) => {
     if (!roomManager.isModerator(socket.id)) {
       callback?.({ success: false, error: 'Not authorized' });
@@ -400,18 +376,14 @@ export function setupGameHandlers(
     const result = engine.removePlayer(playerId);
 
     if (result.success) {
-      // Update room config
       const updatedConfig = engine.getConfig();
       roomManager.setGameConfig(room.code, updatedConfig);
-
-      // Broadcast updated config to all clients
       emitToRoom(io, room.code, 'game:config', updatedConfig);
     }
 
     callback?.(result);
   });
 
-  // Check if players can be modified
   socket.on('moderator:can_modify_players', (callback?: (result: { canModify: boolean }) => void) => {
     if (!roomManager.isModerator(socket.id)) {
       callback?.({ canModify: false });
@@ -433,10 +405,6 @@ export function setupGameHandlers(
     callback?.({ canModify: engine.canModifyPlayers() });
   });
 
-  // =========================================================================
-  // Cleanup
-  // =========================================================================
-
   socket.on('disconnect', () => {
     const room = roomManager.getRoomForSocket(socket.id);
     const wasModerator = roomManager.isModerator(socket.id);
@@ -446,17 +414,14 @@ export function setupGameHandlers(
       roomManager.leaveRoom(socket.id);
 
       if (wasModerator) {
-        // Clean up game engine when moderator disconnects
         const engine = gameEngines.get(roomCode);
         if (engine) {
           engine.cleanup();
           gameEngines.delete(roomCode);
         }
 
-        // Notify all players that the room is closed
         emitToPlayers(io, roomCode, 'room:error', 'The moderator has disconnected. The game session has ended.');
       } else {
-        // Player disconnected - notify moderator
         notifyPlayerCount(io, roomCode);
       }
     }

@@ -14,6 +14,8 @@ import { configRouter } from './routes/config.js';
 import { filesRouter } from './routes/files.js';
 import { datasetsRouter } from './routes/datasets.js';
 import { rostersRouter } from './routes/rosters.js';
+import { tournamentsRouter } from './routes/tournaments.js';
+import { setupTournamentHandlers } from './game/tournament-handlers.js';
 import { swaggerSpec } from './swagger.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -57,6 +59,7 @@ app.use('/api/config', configRouter);
 app.use('/api/files', filesRouter);
 app.use('/api/datasets', datasetsRouter);
 app.use('/api/rosters', rostersRouter);
+app.use('/api/tournaments', tournamentsRouter);
 
 /**
  * @swagger
@@ -89,6 +92,7 @@ io.on('connection', (socket) => {
 
   // Setup game event handlers for this socket
   setupGameHandlers(io, socket);
+  setupTournamentHandlers(io, socket);
 
   socket.on('disconnect', () => {
     console.log(`Client disconnected: ${socket.id}`);
@@ -107,5 +111,14 @@ httpServer.listen(PORT, () => {
 ╚════════════════════════════════════════════════════════════╝
   `);
 });
+
+// Graceful shutdown so tsx watch can kill cleanly
+function shutdown() {
+  io.close();
+  httpServer.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 1000);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 export { io };
