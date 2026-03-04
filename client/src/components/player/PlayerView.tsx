@@ -150,114 +150,106 @@ export function PlayerView() {
           {/* Tossup display */}
           {isTossupPhase && (
             <div className="bg-gray-800 rounded-2xl p-6">
-              <div className="grid grid-cols-1 xl:grid-cols-[1fr_22rem] gap-4">
-                <div>
-                  {/* Power indicator */}
-                  {gameConfig.enable_power_points && gameState.tossupPointsValue > gameConfig.default_points_value && (
-                    <div className="text-center mb-4">
-                      <span className="bg-yellow-500/20 text-yellow-400 px-3 py-1 rounded-full text-sm">
-                        ⚡ POWER ({gameState.tossupPointsValue} pts)
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Question text with inline multimodal chips */}
-                  <div className="text-xl leading-relaxed text-gray-100 flex flex-wrap items-center gap-x-2 gap-y-2">
-                    {renderableRevealedTokens.length > 0 ? (
-                      renderableRevealedTokens.map((token, index) => {
-                        if (token.kind === 'text') {
-                          return <span key={index}>{token.text}</span>;
-                        }
-                        if (token.tokenType === 'audio') {
-                          return (
-                            <span
-                              key={index}
-                              title={token.hash || ''}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border bg-emerald-900/30 text-emerald-300 border-emerald-600/40"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => playAudioToken(token.assetUrl)}
-                                className="h-4 w-4 rounded-full text-[10px] leading-none bg-emerald-500 text-white hover:bg-emerald-400"
-                                aria-label={`Play ${token.displayText || 'audio clip'}`}
-                              >
-                                ▶
-                              </button>
-                              <span>{token.displayText || '[AUDIO]'}</span>
-                            </span>
-                          );
-                        }
-                        return (
-                          <span
-                            key={index}
-                            title={token.hash || ''}
-                            className="px-2 py-0.5 rounded text-xs font-semibold border bg-indigo-900/30 text-indigo-300 border-indigo-600/40"
-                          >
-                            [IMG]
-                          </span>
-                        );
-                      })
-                    ) : (
-                      <span className="text-gray-500 italic">Waiting for question...</span>
-                    )}
-                    {gameState.phase === 'tossup_streaming' && (
-                      <span className="inline-block w-2 h-5 ml-1 bg-blue-500 animate-pulse" />
-                    )}
-                  </div>
-
-                  {lockoutRemainingMs > 0 && (
-                    <div className="mt-3 text-amber-300 text-sm">
-                      Next token unlocks in {(lockoutRemainingMs / 1000).toFixed(1)}s
-                    </div>
-                  )}
-
-                  {/* Word progress bar */}
-                  <div className="mt-4 flex items-center gap-2">
-                    <div className="flex-1 h-1 bg-gray-700 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-blue-500 transition-all duration-200"
-                        style={{
-                          width: `${gameState.totalTokens > 0 ? (gameState.tokenIndex / gameState.totalTokens) * 100 : 0}%`,
-                        }}
-                      />
-                    </div>
-                    <span className="text-xs text-gray-500">
-                      {gameState.tokenIndex}/{gameState.totalTokens}
-                    </span>
-                  </div>
-
-                  {/* Answer line (when revealed) - rendered as HTML */}
-                  {gameState.currentTossupAnswer && (
-                    <div className="mt-4 pt-4 border-t border-gray-700">
-                      <div className="text-sm text-green-400 mb-1">Answer:</div>
-                      <div
-                        className="text-lg text-green-300 font-semibold"
-                        dangerouslySetInnerHTML={{ __html: gameState.currentTossupAnswer }}
-                      />
-                    </div>
-                  )}
+              {/* Power indicator */}
+              {gameConfig.enable_power_points && gameState.tossupPointsValue > gameConfig.default_points_value && (
+                <div className="text-center mb-4">
+                  <span className="bg-yellow-500/20 text-yellow-400 px-3 py-1 rounded-full text-sm">
+                    ⚡ POWER ({gameState.tossupPointsValue} pts)
+                  </span>
                 </div>
+              )}
 
-                {/* Right-side sticky image frame */}
-                <div className="bg-gray-900/30 border border-gray-700 rounded-lg p-3 flex flex-col">
+              {/* Question text with inline multimodal chips */}
+              <div className="text-xl leading-relaxed text-gray-100 flex flex-wrap items-center gap-x-2 gap-y-2">
+                {renderableRevealedTokens.length > 0 ? (
+                  renderableRevealedTokens.map((token, index) => {
+                    if (token.kind === 'text') {
+                      return <span key={index}>{token.text}</span>;
+                    }
+                    if (token.tokenType === 'audio') {
+                      return (
+                        <span
+                          key={index}
+                          title={token.hash || ''}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border bg-emerald-900/30 text-emerald-300 border-emerald-600/40"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => playAudioToken(token.assetUrl)}
+                            className="h-4 w-4 rounded-full text-[10px] leading-none bg-emerald-500 text-white hover:bg-emerald-400"
+                            aria-label={`Play ${token.displayText || 'audio clip'}`}
+                          >
+                            ▶
+                          </button>
+                          <span>{token.displayText || '[AUDIO]'}</span>
+                        </span>
+                      );
+                    }
+                    return (
+                      <span
+                        key={index}
+                        title={token.hash || ''}
+                        className="px-2 py-0.5 rounded text-xs font-semibold border bg-indigo-900/30 text-indigo-300 border-indigo-600/40"
+                      >
+                        [IMG]
+                      </span>
+                    );
+                  })
+                ) : (
+                  <span className="text-gray-500 italic">Waiting for question...</span>
+                )}
+                {gameState.phase === 'tossup_streaming' && (
+                  <span className="inline-block w-2 h-5 ml-1 bg-blue-500 animate-pulse" />
+                )}
+              </div>
+
+              {lockoutRemainingMs > 0 && (
+                <div className="mt-3 text-amber-300 text-sm">
+                  Next token unlocks in {(lockoutRemainingMs / 1000).toFixed(1)}s
+                </div>
+              )}
+
+              {/* Word progress bar */}
+              <div className="mt-4 flex items-center gap-2">
+                <div className="flex-1 h-1 bg-gray-700 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-500 transition-all duration-200"
+                    style={{
+                      width: `${gameState.totalTokens > 0 ? (gameState.tokenIndex / gameState.totalTokens) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
+                <span className="text-xs text-gray-500">
+                  {gameState.tokenIndex}/{gameState.totalTokens}
+                </span>
+              </div>
+
+              {/* Answer line (when revealed) - rendered as HTML */}
+              {gameState.currentTossupAnswer && (
+                <div className="mt-4 pt-4 border-t border-gray-700">
+                  <div className="text-sm text-green-400 mb-1">Answer:</div>
+                  <div
+                    className="text-lg text-green-300 font-semibold"
+                    dangerouslySetInnerHTML={{ __html: gameState.currentTossupAnswer }}
+                  />
+                </div>
+              )}
+
+              {/* Image below question text for player view */}
+              {lastRevealedImageToken && (
+                <div className="mt-6">
                   <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
                     Image
                   </div>
-                  {lastRevealedImageToken ? (
-                    <div className="flex-1 min-h-[220px] max-h-[320px] rounded border border-gray-700 bg-gray-900 flex items-center justify-center overflow-hidden">
-                      <img
-                        src={lastRevealedImageToken.assetUrl}
-                        alt={lastRevealedImageToken.hash || 'multimodal image'}
-                        className="w-full h-full object-contain"
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex-1 min-h-[220px] rounded border border-dashed border-gray-700 bg-gray-900/40 flex items-center justify-center text-sm text-gray-500">
-                      No revealed image
-                    </div>
-                  )}
+                  <div className="w-full rounded-lg border border-gray-700 bg-gray-900 flex items-center justify-center overflow-hidden min-h-[220px] max-h-[360px]">
+                    <img
+                      src={lastRevealedImageToken.assetUrl}
+                      alt={lastRevealedImageToken.hash || 'multimodal image'}
+                      className="w-full h-full object-contain"
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 

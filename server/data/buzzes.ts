@@ -124,9 +124,10 @@ export class Buzzes {
     buzz: number
   ): void {
     // Suppress very early buzzes (before 10 tokens)
-    if (buzz !== 0 && tokenPosition < 10) {
-      buzz = 0;
-    }
+    // TODO: Check this and keep a note of this. Maybe this should be configurable.
+    // if (buzz !== 0 && tokenPosition < 10) {
+    //   buzz = 0;
+    // }
 
     if (!this._buzzes.has(questionId)) {
       this._buzzes.set(questionId, new Map());
