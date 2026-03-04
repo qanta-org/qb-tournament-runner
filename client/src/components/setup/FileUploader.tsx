@@ -311,6 +311,8 @@ export function FileUploader({ files, onChange }: FileUploaderProps) {
 ├── packet_1/
 │   ├── tossups.csv
 │   └── bonuses.csv
+│   ├── img/
+│   └── audio/
 └── responses/
     └── Author__model.buzz.csv`}
               </pre>

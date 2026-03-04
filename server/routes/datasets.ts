@@ -447,6 +447,28 @@ datasetsRouter.get('/list', (_req, res) => {
   res.json({ datasets });
 });
 
+datasetsRouter.get('/asset', (req, res) => {
+  const file = req.query.file;
+  if (typeof file !== 'string' || file.includes('\0')) {
+    return res.status(400).json({ error: 'Invalid file path' });
+  }
+
+  const normalized = path.resolve(file);
+  if (!fs.existsSync(normalized) || !fs.statSync(normalized).isFile()) {
+    return res.status(404).json({ error: 'Asset not found' });
+  }
+
+  const normalizedForCheck = normalized.replace(/\\/g, '/');
+  const isPacketAsset =
+    normalizedForCheck.includes('/packet_') &&
+    (normalizedForCheck.includes('/img/') || normalizedForCheck.includes('/audio/'));
+  if (!isPacketAsset) {
+    return res.status(403).json({ error: 'Asset path not allowed' });
+  }
+
+  return res.sendFile(normalized);
+});
+
 /**
  * @swagger
  * /api/datasets/{id}:
@@ -602,6 +624,8 @@ tournament_name/
 ├── packet_1/
 │   ├── tossups.csv
 │   └── bonuses.csv
+│   ├── img/             # Optional image assets referenced by tossup multimodal tokens
+│   └── audio/           # Optional audio assets referenced by tossup multimodal tokens
 ├── packet_2/
 │   ├── tossups.csv
 │   └── bonuses.csv
@@ -616,8 +640,19 @@ tournament_name/
     fileFormats: {
       tossups: {
         description: 'Tossup questions CSV',
-        requiredColumns: ['question_id', 'text', 'answer'],
-        optionalColumns: ['answers', 'answerline', 'category', 'difficulty'],
+        requiredColumns: ['qid', 'question', 'clean_answers', 'answerline', 'has_image', 'has_audio'],
+        optionalColumns: [
+          'question_id (legacy)',
+          'text (legacy)',
+          'answer/answers (legacy)',
+          'category',
+          'difficulty',
+        ],
+        notes: [
+          'Backward compatibility: legacy headers are accepted during migration.',
+          'Multimodal markers in question are supported: <multimodal type="img|audio|delay" ...>',
+          'Image assets must be in packet_X/img and audio assets in packet_X/audio.',
+        ],
       },
       bonuses: {
         description: 'Bonus questions CSV',

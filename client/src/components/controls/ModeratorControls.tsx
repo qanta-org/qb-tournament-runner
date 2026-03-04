@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useGame } from '../../context/GameContext';
 import { useKeyboardBuzzer } from '../../hooks/useKeyboardBuzzer';
 import { AdjustPointsDialog } from '../dialogs/AdjustPointsDialog';
@@ -14,6 +14,7 @@ export function ModeratorControls() {
 
   const [showAdjustDialog, setShowAdjustDialog] = useState(false);
   const [finalAnswer, setFinalAnswer] = useState('');
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   // Keyboard buzzer hook
   useKeyboardBuzzer();
@@ -28,9 +29,19 @@ export function ModeratorControls() {
     'bonus_final_answer',
   ].includes(gameState.phase);
   const isGameOver = gameState.phase === 'game_over';
+  const isRevealLocked =
+    !!gameState.revealLockoutUntilMs && nowMs < gameState.revealLockoutUntilMs;
+
+  useEffect(() => {
+    if (!gameState.revealLockoutUntilMs) {
+      return;
+    }
+    const interval = window.setInterval(() => setNowMs(Date.now()), 200);
+    return () => window.clearInterval(interval);
+  }, [gameState.revealLockoutUntilMs]);
 
   const handleNextWord = () => {
-    if (isTossupPhase && !gameConfig.auto_stream) {
+    if (isTossupPhase && !gameConfig.auto_stream && !isRevealLocked) {
       nextWord();
     }
   };
@@ -99,8 +110,9 @@ export function ModeratorControls() {
             <button
               className="btn btn-primary"
               onClick={handleNextWord}
+              disabled={isRevealLocked}
             >
-              Next Word →
+              {isRevealLocked ? 'Locked…' : 'Next Token →'}
             </button>
           )}
 

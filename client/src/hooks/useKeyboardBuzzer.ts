@@ -67,10 +67,13 @@ export function useKeyboardBuzzer() {
       }
 
       // Handle arrow right / space for word reveal (tossup manual mode)
+      const isRevealLocked =
+        !!gameState.revealLockoutUntilMs && Date.now() < gameState.revealLockoutUntilMs;
       if (
         (e.key === 'ArrowRight' || e.key === ' ') &&
         isTossupPhase &&
-        !gameConfig.auto_stream
+        !gameConfig.auto_stream &&
+        !isRevealLocked
       ) {
         e.preventDefault();
         nextWord();
@@ -96,6 +99,7 @@ export function useKeyboardBuzzer() {
     gameState.phase,
     gameState.bonusStage,
     gameState.teamBuzzed,
+    gameState.revealLockoutUntilMs,
     buzzerKeyMap,
     buzz,
     nextWord,

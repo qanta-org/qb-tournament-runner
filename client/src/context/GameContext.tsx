@@ -266,13 +266,13 @@ export function GameProvider({ children }: GameProviderProps) {
     // Allow at tossup_ready phase (between tossups)
     if (gameState.phase === 'tossup_ready') return true;
 
-    // Also allow during tossup_streaming if within first 5 words
-    if (gameState.phase === 'tossup_streaming' && gameState.wordIndex <= 5) {
+    // Also allow during tossup_streaming if within first 5 reveal tokens
+    if (gameState.phase === 'tossup_streaming' && gameState.tokenIndex <= 5) {
       return true;
     }
 
     return false;
-  }, [gameState.phase, gameState.wordIndex]);
+  }, [gameState.phase, gameState.tokenIndex]);
 
   const addPlayer = useCallback(
     (teamId: TeamId, player: Player): Promise<{ success: boolean; error?: string }> => {

@@ -13,6 +13,7 @@ import type {
   BonusResponseRecord,
   QuestionResult,
   QuestionOutcome,
+  TossupToken,
 } from '../../shared/types.js';
 import { createInitialGameState } from '../../shared/types.js';
 import { Questions } from '../data/questions.js';
@@ -44,7 +45,7 @@ export class GameEngine {
   private buzzerKeyToPlayerId: Map<string, string> = new Map();
 
   // Current tossup state
-  private currentTossupWords: string[] = [];
+  private currentTossupTokens: TossupToken[] = [];
   private streamTimer: NodeJS.Timeout | null = null;
 
   // Cycle records for logging
@@ -151,6 +152,17 @@ export class GameEngine {
     setupTeam('team_b', this.config.team_b);
   }
 
+  private plainTextFromTokens(tokens: TossupToken[]): string {
+    return tokens
+      .filter((token) => token.kind === 'text')
+      .map((token) => token.text)
+      .join(' ');
+  }
+
+  private isRevealLocked(): boolean {
+    return !!this.state.revealLockoutUntilMs && Date.now() < this.state.revealLockoutUntilMs;
+  }
+
   /**
    * Initialize question results for navigation sidebar
    */
@@ -158,7 +170,7 @@ export class GameEngine {
     // Initialize tossup results
     this.state.tossupResults = this.tossupIds.map((id, index) => {
       const tossup = this.questions.getTossup(id);
-      const text = tossup?.text || '';
+      const text = tossup ? this.plainTextFromTokens(tossup.tokens) : '';
       const previewText = text.split(/\s+/).slice(0, 10).join(' ') + (text.split(/\s+/).length > 10 ? '...' : '');
 
       return {
@@ -313,11 +325,16 @@ export class GameEngine {
     }
 
     // Reset tossup state
-    this.currentTossupWords = tossup.text.split(/\s+/);
+    this.currentTossupTokens = tossup.tokens;
     this.state.phase = 'tossup_streaming';
+    this.state.tokenIndex = 0;
+    this.state.totalTokens = this.currentTossupTokens.length;
     this.state.wordIndex = 0;
     this.state.revealedText = '';
-    this.state.totalWords = this.currentTossupWords.length;
+    this.state.totalWords = this.currentTossupTokens.length;
+    this.state.activeMultimodalToken = null;
+    this.state.revealLockoutUntilMs = null;
+    this.state.revealedTossupTokens = [];
     this.state.teamBuzzed = { team_a: false, team_b: false };
     this.state.buzzingPlayer = null;
     this.state.buzzingPlayerGuess = null;
@@ -332,7 +349,8 @@ export class GameEngine {
 
     // Set current answer and full text for moderator view
     this.state.currentTossupAnswer = tossup.answer;
-    this.state.fullTossupText = tossup.text;
+    this.state.fullTossupText = this.plainTextFromTokens(tossup.tokens);
+    this.state.fullTossupTokens = tossup.tokens;
 
     // Set initial points value
     this.state.tossupPointsValue = this.config.enable_power_points
@@ -351,13 +369,13 @@ export class GameEngine {
     if (this.config.auto_stream) {
       this.startAutoStream();
     } else {
-      // In manual mode, reveal first word
+      // In manual mode, reveal first token
       this.revealNextWord();
     }
   }
 
   /**
-   * Start auto-streaming words
+   * Start auto-streaming tokens
    */
   private startAutoStream(): void {
     const pauseDuration = Math.floor(60000 / this.config.streaming_speed);
@@ -380,44 +398,49 @@ export class GameEngine {
   }
 
   /**
-   * Reveal the next word in the tossup
+   * Reveal the next token in the tossup
    */
   revealNextWord(): void {
     if (this.state.phase !== 'tossup_streaming') return;
+    if (this.isRevealLocked()) return;
 
     // Check if we've reached the end
-    if (this.state.wordIndex >= this.currentTossupWords.length) {
+    if (this.state.tokenIndex >= this.currentTossupTokens.length) {
       this.endTossupQuestion();
       return;
     }
 
-    const word = this.currentTossupWords[this.state.wordIndex];
+    const token = this.currentTossupTokens[this.state.tokenIndex];
+    const currentPosition = this.state.tokenIndex;
 
-    // Check if this is the power mark word
-    if (this.config.enable_power_points) {
+    if (token.kind === 'text' && this.config.enable_power_points) {
       const powerMark = this.questions.getPowerMark(this.state.currentTossupId!);
-      if (powerMark && word.toLowerCase().startsWith(powerMark.toLowerCase())) {
+      if (powerMark && token.text.toLowerCase().startsWith(powerMark.toLowerCase())) {
         this.state.tossupPointsValue = this.config.default_points_value;
       }
     }
 
-    // Add word to revealed text
-    if (this.state.revealedText) {
-      this.state.revealedText += ' ' + word;
-    } else {
-      this.state.revealedText = word;
+    if (token.kind === 'text') {
+      if (this.state.revealedText) {
+        this.state.revealedText += ' ' + token.text;
+      } else {
+        this.state.revealedText = token.text;
+      }
+    } else if (token.tokenType === 'img' || token.tokenType === 'audio') {
+      this.state.activeMultimodalToken = token;
+      const lockoutMs = Math.max(0, this.config.multimodal_reveal_lockout_seconds) * 1000;
+      this.state.revealLockoutUntilMs = Date.now() + lockoutMs;
     }
+    this.state.revealedTossupTokens.push(token);
 
     // Get current AI guesses
-    const guesses = this.buzzes.getTossupGuesses(
-      this.state.currentTossupId!,
-      this.state.wordIndex
-    );
+    const guesses = this.buzzes.getTossupGuesses(this.state.currentTossupId!, currentPosition);
 
     // Check for AI buzzes
     this.checkForAIBuzzes(guesses);
 
-    this.state.wordIndex++;
+    this.state.tokenIndex++;
+    this.state.wordIndex = this.state.tokenIndex;
     this.emitState();
   }
 
@@ -441,7 +464,7 @@ export class GameEngine {
       if (this.state.teamBuzzed[playerTeam]) continue;
 
       // Suppress early AI second buzzes
-      const isLastWord = this.state.wordIndex === this.currentTossupWords.length - 1;
+      const isLastWord = this.state.wordIndex === this.currentTossupTokens.length - 1;
       if (this.state.teamBuzzed[otherTeam] && !isLastWord) {
         if (this.config.suppress_early_ai_second_buzzes) {
           continue;
@@ -645,9 +668,13 @@ export class GameEngine {
 
     this.state.phase = 'tossup_ready';
     this.state.buzzingPlayer = null;
+    this.state.revealLockoutUntilMs = null;
 
     // Show full question text
-    this.state.revealedText = this.currentTossupWords.join(' ');
+    this.state.revealedText = this.plainTextFromTokens(this.currentTossupTokens);
+    this.state.tokenIndex = this.currentTossupTokens.length;
+    this.state.wordIndex = this.currentTossupTokens.length;
+    this.state.revealedTossupTokens = [...this.currentTossupTokens];
 
     // Mark as dead if not already marked (could be marked in handleAnswerRuling)
     const currentResult = this.state.tossupResults.find(r => r.index === this.state.currentTossupNum - 1);
@@ -707,6 +734,10 @@ export class GameEngine {
     this.state.currentGuesses = [];
     this.state.currentTossupAnswer = null;
     this.state.fullTossupText = null;
+    this.state.fullTossupTokens = null;
+    this.state.revealedTossupTokens = [];
+    this.state.activeMultimodalToken = null;
+    this.state.revealLockoutUntilMs = null;
 
     // Set first part's answer for moderator
     if (bonus.parts.length > 0) {
@@ -978,14 +1009,14 @@ export class GameEngine {
 
   /**
    * Check if players can be modified in the current phase
-   * Allowed at the start of a tossup (within first 5 words)
+   * Allowed at the start of a tossup (within first 5 reveal tokens)
    */
   canModifyPlayers(): boolean {
     // Allow at tossup_ready phase (between tossups)
     if (this.state.phase === 'tossup_ready') return true;
 
-    // Also allow during tossup_streaming if within first 5 words
-    if (this.state.phase === 'tossup_streaming' && this.state.wordIndex <= 5) {
+    // Also allow during tossup_streaming if within first 5 reveal tokens
+    if (this.state.phase === 'tossup_streaming' && this.state.tokenIndex <= 5) {
       return true;
     }
 
@@ -1000,7 +1031,7 @@ export class GameEngine {
     if (!this.canModifyPlayers()) {
       return {
         success: false,
-        error: 'Players can only be added at the start of a tossup (within the first 5 words)'
+        error: 'Players can only be added at the start of a tossup (within the first 5 reveal tokens)'
       };
     }
 
@@ -1046,7 +1077,7 @@ export class GameEngine {
     if (!this.canModifyPlayers()) {
       return {
         success: false,
-        error: 'Players can only be removed at the start of a tossup (within the first 5 words)'
+        error: 'Players can only be removed at the start of a tossup (within the first 5 reveal tokens)'
       };
     }
 

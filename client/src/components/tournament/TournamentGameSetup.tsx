@@ -27,6 +27,7 @@ export function TournamentGameSetup({ tournamentContext }: TournamentGameSetupPr
     defaultPointsValue: gameConfig?.default_points_value ?? 10,
     tossupPenaltyValue: gameConfig?.tossup_penalty_value ?? 5,
     bonusPartPoints: gameConfig?.bonus_part_points ?? 10,
+    multimodalRevealLockoutSeconds: gameConfig?.multimodal_reveal_lockout_seconds ?? 5,
   });
 
   const [step, setStep] = useState<'teams' | 'settings'>('teams');
@@ -56,16 +57,24 @@ export function TournamentGameSetup({ tournamentContext }: TournamentGameSetupPr
 
   // Dataset ID for roster loading
   const datasetId = (() => {
-    if (!gameConfig) return undefined;
-    // Extract from tossup_file path
-    const parts = gameConfig.tossup_file.split('/');
-    // Find the dataset folder (parent of packet_X or the folder itself)
-    for (let i = parts.length - 1; i >= 0; i--) {
-      if (parts[i].startsWith('packet_')) continue;
-      if (parts[i] === 'data' || parts[i] === '') continue;
-      return parts[i];
+    if (!gameConfig?.tossup_file) return undefined;
+
+    const segments = gameConfig.tossup_file
+      .replace(/\\/g, '/')
+      .split('/')
+      .filter(Boolean);
+
+    if (segments.length === 0) return undefined;
+
+    // Remove filename (e.g., tossups.csv)
+    segments.pop();
+
+    // Tournament packets are nested under packet_X/
+    if (segments.length > 0 && /^packet_/i.test(segments[segments.length - 1])) {
+      segments.pop();
     }
-    return undefined;
+
+    return segments.length > 0 ? segments[segments.length - 1] : undefined;
   })();
 
   const getAllUsedBuzzerKeys = (): Map<string, string> => {
@@ -94,6 +103,7 @@ export function TournamentGameSetup({ tournamentContext }: TournamentGameSetupPr
       default_points_value: settings.defaultPointsValue,
       tossup_penalty_value: settings.tossupPenaltyValue,
       bonus_part_points: settings.bonusPartPoints,
+      multimodal_reveal_lockout_seconds: settings.multimodalRevealLockoutSeconds,
     };
 
     startGame(config);
@@ -265,6 +275,21 @@ export function TournamentGameSetup({ tournamentContext }: TournamentGameSetupPr
                     type="number"
                     value={settings.bonusPartPoints}
                     onChange={(e) => setSettings({ ...settings, bonusPartPoints: parseInt(e.target.value, 10) || 10 })}
+                    className="w-full border rounded px-2 py-1 text-sm mt-1"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">MM lockout (sec)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={settings.multimodalRevealLockoutSeconds}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        multimodalRevealLockoutSeconds: Math.max(0, parseInt(e.target.value, 10) || 5),
+                      })
+                    }
                     className="w-full border rounded px-2 py-1 text-sm mt-1"
                   />
                 </div>

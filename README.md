@@ -8,7 +8,7 @@ A web-based Quiz Bowl buzzer system for human-AI hybrid competitions.
 - **Room-based sessions**: 5-letter join codes for easy access
 - **Question navigation sidebar**: Jump to any question with color-coded outcomes (team wins, dead, pending)
 - **Question replay**: Replay any question with automatic score adjustment (previous scores reversed)
-- Real-time question streaming with word-by-word reveal
+- Real-time tossup streaming with token-by-token reveal (text + multimodal tokens)
 - **Moderator preview mode**: See full question text with grayed unrevealed words
 - **Player reveal mode**: Words only appear as they're revealed
 - Support for multiple human and AI players per team
@@ -25,7 +25,7 @@ A web-based Quiz Bowl buzzer system for human-AI hybrid competitions.
 
 ### Moderator Client
 - Creates a game room and receives a 5-letter join code
-- Full control: start game, reveal words, accept/reject answers, navigate/replay questions
+- Full control: start game, reveal tokens, accept/reject answers, navigate/replay questions
 - Sees correct answers for all questions
 - Sees all dialogs and controls
 
@@ -41,10 +41,15 @@ A web-based Quiz Bowl buzzer system for human-AI hybrid competitions.
 ## Quick Start
 
 ```bash
-cd buzzer-web
+# From the repo root
 npm install
 npm run dev
 ```
+
+This starts both:
+
+- The **API server** on `http://localhost:3001`
+- The **web client** on `http://localhost:5173`
 
 Open **http://localhost:5173** in your browser.
 
@@ -64,6 +69,55 @@ Open **http://localhost:5173** in your browser.
 4. **Dashboard**: View schedule and standings; click "Start Game" on any ready game
 5. **Play**: Games run like single-game sessions; use "Back to Tournament Dashboard" when done
 6. **Multi-moderator**: Share the tournament code — any moderator can join and run games in parallel
+
+---
+
+## Running Locally (Development)
+
+### Prerequisites
+
+- **Node.js**: v20+ recommended
+- **npm**: v10+ recommended
+
+### One-Command Dev Setup
+
+From the repo root:
+
+```bash
+npm install
+npm run dev
+```
+
+This will:
+
+- Start the **backend server** with Express + Socket.io on `http://localhost:3001`
+- Start the **frontend dev server** (Vite) on `http://localhost:5173`
+
+You can then:
+
+- Use the UI at `http://localhost:5173` to start games and tournaments.
+- Open Swagger UI at `http://localhost:3001/api/docs` to explore and test REST APIs.
+
+### Separate Servers (Optional)
+
+If you prefer to run client and server separately:
+
+```bash
+# Backend only
+npm run dev:server
+
+# Frontend only (expects backend at localhost:3001)
+npm run dev:client
+```
+
+### Environment Configuration
+
+- `PORT` (default `3001`): Backend HTTP and WebSocket port.
+- `VITE_SOCKET_URL`: WebSocket base URL for the client.
+  - In local dev this is usually auto-detected; override it when using a remote server.
+- Datasets are read from the `data/` directory; see [**Dataset Directory Structure**](##dataset-directory-structure) below for formats.
+
+For more developer-focused information (code structure, where to add features, etc.), see `docs/DEVELOPMENT.md`.
 
 ---
 
@@ -163,6 +217,8 @@ tournament_name/
 ├── packet_1/
 │   ├── tossups.csv
 │   └── bonuses.csv
+│   ├── img/                 # Optional: image assets referenced by tossup multimodal tokens
+│   └── audio/               # Optional: audio assets referenced by tossup multimodal tokens
 ├── packet_2/
 │   ├── tossups.csv
 │   └── bonuses.csv
@@ -180,12 +236,29 @@ tournament_name/
 
 | Column | Required | Description |
 |--------|----------|-------------|
-| `question_id` | Yes | Unique identifier |
-| `text` | Yes | Full question text |
-| `answer` | Yes | Primary answer |
-| `answers` | No | JSON array of acceptable answers |
-| `answerline` | No | Formatted answer line |
+| `qid` | Yes | Unique identifier (preferred header) |
+| `question` | Yes | Full question text, including optional multimodal markers |
+| `clean_answers` | Yes | JSON/array-like acceptable answers |
+| `answerline` | Yes | Formatted answer line |
+| `has_image` | Yes | Whether tossup contains image multimodal tokens |
+| `has_audio` | Yes | Whether tossup contains audio multimodal tokens |
 | `category` | No | Question category |
+
+Legacy compatibility during migration:
+- `question_id` / `id` accepted for `qid`
+- `text` / `question_text` accepted for `question`
+- `answers` / `answer` / `answer_refs` accepted for `clean_answers`
+- `answerline` remains optional for legacy rows
+
+Multimodal token syntax in `question`:
+- `<multimodal type="img" hash="...">`
+- `<multimodal type="audio" hash="..." displayText="...">`
+- `<multimodal type="delay">`
+
+Multimodal asset resolution:
+- Image token hashes resolve to exactly one `packet_X/img/{hash}.{ext}` file.
+- Audio token hashes resolve to exactly one `packet_X/audio/{hash}.{ext}` file.
+- Missing or ambiguous hash matches are treated as dataset errors.
 
 #### bonuses.csv
 
@@ -227,7 +300,7 @@ tournament_name/
 | Column | Required | Description |
 |--------|----------|-------------|
 | `question_id` | Yes | Matches tossup question_id |
-| `token_position` | Yes | Word position (0-indexed) |
+| `token_position` | Yes | Tossup token position (0-indexed) |
 | `guess` | Yes | Model's answer guess |
 | `confidence` | Yes | Confidence score (0-1) |
 | `buzz` | Yes | Whether to buzz (0 or 1) |
@@ -263,7 +336,7 @@ The application validates datasets and shows warnings/errors:
 | Key | Action |
 |-----|--------|
 | `1-9` (or custom) | Buzz for human player |
-| `→` or `Space` | Reveal next word / advance bonus |
+| `→` or `Space` | Reveal next token / advance bonus |
 | `Y` | Accept answer (in review dialog) |
 | `N` | Reject answer with penalty |
 | `M` | Reject answer without penalty |
@@ -331,7 +404,7 @@ The Swagger UI provides interactive documentation where you can explore and test
 
 ### Game Events (Client → Server)
 - `game:start` - Start a new game with config (moderator only)
-- `moderator:next_word` - Reveal next word (moderator only)
+- `moderator:next_word` - Reveal next tossup token (moderator only)
 - `player:buzz` - Player buzzes in (moderator triggers for human players)
 - `moderator:answer_ruling` - Accept/reject answer (moderator only)
 - `moderator:adjust_points` - Manual score adjustment (moderator only)
@@ -355,18 +428,55 @@ The Swagger UI provides interactive documentation where you can explore and test
 ## Development
 
 ```bash
-# Development mode (hot reload)
+# Development mode (hot reload, client + server)
 npm run dev
 
-# Build for production
+# Build for production (client + server)
 npm run build
 
-# Production server
+# Production server (after build)
 npm start
 
-# Type checking
+# Linting
+npm run lint
+
+# Type checking (client + server)
 npm run typecheck
+
+# Tests (Vitest)
+npm test
 ```
+
+---
+
+## Testing
+
+### Unit / Integration Tests
+
+- **Command**: `npm test`
+- **Runner**: Vitest (configured in `package.json`)
+- **Location**: Current tests live primarily under `server/game/` (for example, `tournaments.test.ts`).
+
+You can also run Vitest in watch mode:
+
+```bash
+npx vitest --watch
+```
+
+### Dataset Validation as Tests
+
+Dataset validation endpoints act as a practical test suite for your data:
+
+- `GET /api/datasets/:id/validate` – Validate a specific dataset.
+- `GET /api/datasets/help/structure` – Return the expected structure as JSON.
+
+To use these:
+
+1. Run the app locally (`npm run dev`).
+2. Open Swagger UI at `http://localhost:3001/api/docs`.
+3. Call the dataset endpoints above to confirm that your files and rosters are valid.
+
+Validation issues are also surfaced in the UI (see **Validation** below) and server logs.
 
 ---
 
@@ -724,7 +834,7 @@ This section helps developers understand where different functionality lives and
 - **Key handlers**:
   - `room:create`, `room:join`: Room management
   - `game:start`: Initialize game
-  - `moderator:next_word`: Word revelation
+  - `moderator:next_word`: Tossup token revelation
   - `player:buzz`: Player buzzes
   - `moderator:answer_ruling`: Answer acceptance/rejection
   - `moderator:play_tossup`, `moderator:play_bonus`: Question navigation
@@ -831,7 +941,7 @@ The engine properly cleans up state when transitioning between phases:
 
 - **Starting a new game** (`startGame()`): Resets all game state including scores, question numbers, and muted players
 - **Starting a tossup** (`startTossupQuestion()`): 
-  - Resets tossup-specific fields (word index, revealed text, team buzzed, etc.)
+  - Resets tossup-specific fields (token index, revealed text, lockout/multimodal state, team buzzed, etc.)
   - **Clears bonus-related state** to prevent stale data
 - **Starting a bonus** (`startBonusQuestion()`):
   - Resets bonus-specific fields (part number, stage, responses, etc.)
@@ -843,9 +953,10 @@ The engine properly cleans up state when transitioning between phases:
   - `currentTossupAnswer` → `null` (players don't see answers until revealed)
   - `currentBonusPartAnswer` → `null`
   - `fullTossupText` → `null` (players only see `revealedText`)
+  - `fullTossupTokens` → `null` (players do not receive unrevealed tossup token stream)
   - `tossupResults` → `[]` (navigation sidebar data)
   - `bonusResults` → `[]`
-- **Security**: Full question text is never sent to player clients, only revealed words
+- **Security**: Full question preview tokens are never sent to player clients, only revealed text + active multimodal event
 
 #### State Consistency Notes
 - **Question numbering**: `currentTossupNum` and `currentBonusNum` are 1-indexed for display but used as 0-indexed for array access

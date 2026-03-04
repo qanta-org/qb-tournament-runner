@@ -12,6 +12,7 @@ export const rostersRouter = Router();
 // Base directories for roster files
 const ROSTER_BASE_DIRS = [
   path.join(__dirname, '../../../data/tourney'), // Tournament data
+  path.join(__dirname, '../../data'),            // Repo data directory
   path.join(__dirname, '../../../'),              // Parent of buzzer-web
 ];
 
@@ -72,6 +73,40 @@ function findRosterFile(filename: string): string | null {
   }
   
   return null;
+}
+
+/**
+ * Find a dataset-specific roster file.
+ * Supports datasets directly under a base dir and under a base dir's data/ folder.
+ */
+function findDatasetRosterFile(dataset: string, filename: string): string | null {
+  const candidates = new Set<string>();
+
+  for (const baseDir of ROSTER_BASE_DIRS) {
+    candidates.add(path.join(baseDir, dataset, filename));
+    candidates.add(path.join(baseDir, 'data', dataset, filename));
+  }
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Load a global roster file from base dirs only (no subdirectory scan).
+ */
+function loadGlobalRosterFile(filename: string): RosterEntry[] {
+  for (const baseDir of ROSTER_BASE_DIRS) {
+    const directPath = path.join(baseDir, filename);
+    if (fs.existsSync(directPath)) {
+      return loadRosterFile(directPath);
+    }
+  }
+  return [];
 }
 
 /**
@@ -254,26 +289,24 @@ rostersRouter.get('/ai', (req, res) => {
   const dataset = req.query.dataset as string | undefined;
   
   let entries: RosterEntry[] = [];
+  let source = 'global';
   
   if (dataset) {
-    // Try to find roster in dataset directory
-    for (const baseDir of ROSTER_BASE_DIRS) {
-      const datasetPath = path.join(baseDir, dataset, 'ai_roster.csv');
-      if (fs.existsSync(datasetPath)) {
-        entries = loadRosterFile(datasetPath);
-        break;
-      }
+    const datasetPath = findDatasetRosterFile(dataset, 'ai_roster.csv');
+    if (datasetPath) {
+      entries = loadRosterFile(datasetPath);
+      source = dataset;
     }
   }
   
   // Fall back to global roster
   if (entries.length === 0) {
-    entries = loadRosterFile('ai_roster.csv');
+    entries = loadGlobalRosterFile('ai_roster.csv');
   }
   
   res.json({ 
     players: entries.filter(e => e.type === 'ai'),
-    source: dataset || 'global',
+    source,
   });
 });
 
@@ -319,26 +352,24 @@ rostersRouter.get('/human', (req, res) => {
   const dataset = req.query.dataset as string | undefined;
   
   let entries: RosterEntry[] = [];
+  let source = 'global';
   
   if (dataset) {
-    // Try to find roster in dataset directory
-    for (const baseDir of ROSTER_BASE_DIRS) {
-      const datasetPath = path.join(baseDir, dataset, 'human_roster.csv');
-      if (fs.existsSync(datasetPath)) {
-        entries = loadRosterFile(datasetPath);
-        break;
-      }
+    const datasetPath = findDatasetRosterFile(dataset, 'human_roster.csv');
+    if (datasetPath) {
+      entries = loadRosterFile(datasetPath);
+      source = dataset;
     }
   }
   
   // Fall back to global roster
   if (entries.length === 0) {
-    entries = loadRosterFile('human_roster.csv');
+    entries = loadGlobalRosterFile('human_roster.csv');
   }
   
   res.json({ 
     players: entries.filter(e => e.type === 'human'),
-    source: dataset || 'global',
+    source,
   });
 });
 

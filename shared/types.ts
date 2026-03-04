@@ -65,6 +65,7 @@ export interface GameConfig {
 
   // Bonus part points value
   bonus_part_points: number;
+  multimodal_reveal_lockout_seconds: number;
 
   // Teams
   team_a: Team;
@@ -91,19 +92,48 @@ export interface AppConfig {
 export interface TossupQuestion {
   id: string;
   text: string;
+  tokens: TossupToken[];
+  has_image: boolean;
+  has_audio: boolean;
   answer: string;
   answer_refs: string[];
+}
+
+export type MultimodalTokenType = 'img' | 'audio' | 'delay';
+
+export interface TossupTextToken {
+  kind: 'text';
+  text: string;
+}
+
+export interface TossupMultimodalToken {
+  kind: 'multimodal';
+  tokenType: MultimodalTokenType;
+  hash?: string;
+  displayText?: string;
+  assetPath?: string;
+  assetUrl?: string;
+}
+
+export type TossupToken = TossupTextToken | TossupMultimodalToken;
+
+export interface BonusMedia {
+  imageUrl?: string;
+  audioUrl?: string;
+  audioDisplayText?: string;
 }
 
 export interface BonusPart {
   text: string;
   answer: string;
   answer_refs: string[];
+  media?: BonusMedia;
 }
 
 export interface BonusQuestion {
   id: string;
   leadin: string;
+  leadinMedia?: BonusMedia;
   parts: BonusPart[];
 }
 
@@ -169,9 +199,13 @@ export interface GameState {
   // Tossup state
   currentTossupNum: number;
   currentTossupId: string | null;
+  tokenIndex: number;
+  totalTokens: number;
   wordIndex: number;
   revealedText: string;
   totalWords: number;
+  activeMultimodalToken: TossupMultimodalToken | null;
+  revealLockoutUntilMs: number | null;
   teamBuzzed: Record<TeamId, boolean>;
   buzzingPlayer: string | null;
   buzzingPlayerGuess: string | null;  // The guess from buzzing player (shown to all)
@@ -182,6 +216,8 @@ export interface GameState {
 
   // Full tossup text (moderator only - for preview with grayed unrevealed words)
   fullTossupText: string | null;
+  fullTossupTokens: TossupToken[] | null;
+  revealedTossupTokens: TossupToken[];
 
   // Current guesses from AI
   currentGuesses: TossupResponse[];
@@ -451,6 +487,7 @@ export const DEFAULT_GAME_CONFIG: Partial<GameConfig> = {
   tossup_penalty_value: 5,
   tossup_penalty_value_second_team: 0,
   bonus_part_points: 10,
+  multimodal_reveal_lockout_seconds: 5,
 };
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
@@ -465,15 +502,21 @@ export function createInitialGameState(): GameState {
     roomCode: null,
     currentTossupNum: 0,
     currentTossupId: null,
+    tokenIndex: 0,
+    totalTokens: 0,
     wordIndex: 0,
     revealedText: '',
     totalWords: 0,
+    activeMultimodalToken: null,
+    revealLockoutUntilMs: null,
     teamBuzzed: { team_a: false, team_b: false },
     buzzingPlayer: null,
     buzzingPlayerGuess: null,
     tossupPointsValue: 10,
     currentTossupAnswer: null,
     fullTossupText: null,
+    fullTossupTokens: null,
+    revealedTossupTokens: [],
     currentGuesses: [],
     currentBonusNum: 0,
     currentBonusId: null,
@@ -501,8 +544,9 @@ export function filterStateForPlayer(state: GameState): GameState {
     // Players don't see the correct answer until question ends
     currentTossupAnswer: null,
     currentBonusPartAnswer: null,
-    // Players don't see the full tossup text - they only see revealed words
+    // Players don't see the full tossup text/tokens; they only see revealed stream state
     fullTossupText: null,
+    fullTossupTokens: null,
     // Players don't see question results (for navigation)
     tossupResults: [],
     bonusResults: [],

@@ -45,6 +45,7 @@ export function GameSetup() {
     defaultPointsValue: 10,
     tossupPenaltyValue: 5,
     bonusPartPoints: 10,
+    multimodalRevealLockoutSeconds: 5,
   });
 
   // When files change, try to load available models
@@ -117,6 +118,7 @@ export function GameSetup() {
       tossup_penalty_value: settings.tossupPenaltyValue,
       tossup_penalty_value_second_team: 0,
       bonus_part_points: settings.bonusPartPoints,
+      multimodal_reveal_lockout_seconds: settings.multimodalRevealLockoutSeconds,
     };
 
     startGame(config);
@@ -329,7 +331,7 @@ export function GameSetup() {
                 </div>
 
                 {/* Point values */}
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-4 gap-4">
                   <div>
                     <label className="label">Tossup Points</label>
                     <input
@@ -367,6 +369,21 @@ export function GameSetup() {
                         setSettings({
                           ...settings,
                           bonusPartPoints: parseInt(e.target.value) || 10,
+                        })
+                      }
+                      className="input"
+                    />
+                  </div>
+                  <div>
+                    <label className="label">MM Lockout (sec)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={settings.multimodalRevealLockoutSeconds}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          multimodalRevealLockoutSeconds: Math.max(0, parseInt(e.target.value) || 5),
                         })
                       }
                       className="input"
@@ -451,6 +468,7 @@ export function GameSetup() {
                       Points: +{settings.defaultPointsValue} / -{settings.tossupPenaltyValue} / +
                       {settings.bonusPartPoints} (bonus)
                     </li>
+                    <li>Multimodal lockout: {settings.multimodalRevealLockoutSeconds}s</li>
                   </ul>
                 </div>
               </div>

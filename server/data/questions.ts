@@ -1,7 +1,14 @@
 import fs from 'fs';
 import path from 'path';
 import { parse } from 'csv-parse/sync';
-import type { TossupQuestion, BonusQuestion, BonusPart } from '../../shared/types.js';
+import type {
+  TossupQuestion,
+  BonusQuestion,
+  BonusPart,
+  TossupToken,
+  TossupMultimodalToken,
+  BonusMedia,
+} from '../../shared/types.js';
 import { evaluateAnswer } from './evaluation.js';
 
 /**
@@ -25,7 +32,140 @@ function parseAnswerRefs(answer: string): string[] {
 /**
  * Process a raw tossup dictionary from CSV/JSON
  */
-function processTossupDict(item: Record<string, unknown>): TossupQuestion {
+function parseBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
+function parseMultimodalAttributes(raw: string): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  const attrPattern = /([a-zA-Z_][a-zA-Z0-9_-]*)\s*=\s*"([^"]*)"/g;
+  let match: RegExpExecArray | null = attrPattern.exec(raw);
+
+  while (match) {
+    attributes[match[1]] = match[2];
+    match = attrPattern.exec(raw);
+  }
+
+  return attributes;
+}
+
+function parseTossupTokens(questionText: string): TossupToken[] {
+  const tokens: TossupToken[] = [];
+  const multimodalPattern = /<multimodal\s+([^>]+)>/gi;
+  let cursor = 0;
+  let match: RegExpExecArray | null = multimodalPattern.exec(questionText);
+
+  const pushTextTokens = (segment: string) => {
+    const words = segment.split(/\s+/).filter(Boolean);
+    for (const word of words) {
+      tokens.push({ kind: 'text', text: word });
+    }
+  };
+
+  while (match) {
+    const before = questionText.slice(cursor, match.index);
+    pushTextTokens(before);
+
+    const attrs = parseMultimodalAttributes(match[1]);
+    const tokenType = (attrs.type || '').toLowerCase();
+    if (tokenType === 'img' || tokenType === 'audio' || tokenType === 'delay') {
+      const multimodalToken: TossupMultimodalToken = {
+        kind: 'multimodal',
+        tokenType,
+        hash: attrs.hash,
+        displayText: attrs.displayText,
+      };
+      tokens.push(multimodalToken);
+    }
+
+    cursor = match.index + match[0].length;
+    match = multimodalPattern.exec(questionText);
+  }
+
+  pushTextTokens(questionText.slice(cursor));
+  return tokens;
+}
+
+function extractBonusMedia(
+  text: string,
+  questionFile: string
+): { cleanText: string; media?: BonusMedia } {
+  const multimodalPattern = /<multimodal\s+([^>]+)>/gi;
+  let match: RegExpExecArray | null = multimodalPattern.exec(text);
+
+  const media: BonusMedia = {};
+
+  while (match) {
+    const attrs = parseMultimodalAttributes(match[1]);
+    const tokenType = (attrs.type || '').toLowerCase();
+    const hash = attrs.hash;
+
+    if ((tokenType === 'img' || tokenType === 'audio') && hash) {
+      const token: TossupMultimodalToken = {
+        kind: 'multimodal',
+        tokenType,
+        hash,
+        displayText: attrs.displayText,
+      };
+
+      const assetPath = getPacketAssetPath(questionFile, token);
+      const assetUrl = `/api/datasets/asset?file=${encodeURIComponent(assetPath)}`;
+
+      if (tokenType === 'img' && !media.imageUrl) {
+        media.imageUrl = assetUrl;
+      } else if (tokenType === 'audio' && !media.audioUrl) {
+        media.audioUrl = assetUrl;
+        media.audioDisplayText = attrs.displayText;
+      }
+    }
+
+    match = multimodalPattern.exec(text);
+  }
+
+  const cleanText = text.replace(multimodalPattern, '').trim();
+
+  if (media.imageUrl || media.audioUrl) {
+    return { cleanText, media };
+  }
+
+  return { cleanText, media: undefined };
+}
+
+function getPacketAssetPath(questionFile: string, token: TossupMultimodalToken): string {
+  if (token.tokenType === 'delay') {
+    return '';
+  }
+
+  const hash = token.hash?.trim();
+  if (!hash) {
+    throw new Error(`Missing hash for ${token.tokenType} multimodal token`);
+  }
+
+  const packetDir = path.dirname(questionFile);
+  const assetDir = path.join(packetDir, token.tokenType === 'img' ? 'img' : 'audio');
+  if (!fs.existsSync(assetDir) || !fs.statSync(assetDir).isDirectory()) {
+    throw new Error(`Missing asset directory: ${assetDir}`);
+  }
+
+  const matches = fs
+    .readdirSync(assetDir)
+    .filter((name) => name.startsWith(`${hash}.`))
+    .map((name) => path.join(assetDir, name));
+
+  if (matches.length === 0) {
+    throw new Error(`No asset found for hash "${hash}" in ${assetDir}`);
+  }
+  if (matches.length > 1) {
+    throw new Error(`Multiple assets found for hash "${hash}" in ${assetDir}`);
+  }
+
+  return matches[0];
+}
+
+function processTossupDict(item: Record<string, unknown>, questionFile: string): TossupQuestion {
   // id must be present as one of the following keys
   const qid = item.question_id || item.qid || item.id;
 
@@ -43,9 +183,30 @@ function processTossupDict(item: Record<string, unknown>): TossupQuestion {
     item.answerline || item.answer_line || item.answer || answerRefs.join(', OR ')
   );
 
+  const parsedTokens = parseTossupTokens(questionText).map((token) => {
+    if (token.kind === 'multimodal' && token.tokenType !== 'delay') {
+      const assetPath = getPacketAssetPath(questionFile, token);
+      return {
+        ...token,
+        assetUrl: `/api/datasets/asset?file=${encodeURIComponent(assetPath)}`,
+      };
+    }
+    return token;
+  });
+
+  const hasImage = parseBoolean(item.has_image) || parsedTokens.some(
+    (token) => token.kind === 'multimodal' && token.tokenType === 'img'
+  );
+  const hasAudio = parseBoolean(item.has_audio) || parsedTokens.some(
+    (token) => token.kind === 'multimodal' && token.tokenType === 'audio'
+  );
+
   return {
     id: String(qid),
     text: questionText,
+    tokens: parsedTokens,
+    has_image: hasImage,
+    has_audio: hasAudio,
     answer: answerLine,
     answer_refs: answerRefs,
   };
@@ -54,16 +215,28 @@ function processTossupDict(item: Record<string, unknown>): TossupQuestion {
 /**
  * Process a raw bonus dictionary from CSV/JSON
  */
-function processBonusDict(item: Record<string, unknown>): BonusQuestion {
+function processBonusDict(item: Record<string, unknown>, questionFile: string): BonusQuestion {
   const questionId = String(item.question_id);
-  const leadin = String(item.leadin || '');
+  const rawLeadin = String(item.leadin || '');
+  const { cleanText: leadin, media: leadinMedia } = extractBonusMedia(rawLeadin, questionFile);
 
   // Check if we're loading the new format or old format
   if (item.parts && Array.isArray(item.parts)) {
+    const rawParts = item.parts as BonusPart[];
+    const parts: BonusPart[] = rawParts.map((part) => {
+      const { cleanText, media } = extractBonusMedia(part.text, questionFile);
+      return {
+        ...part,
+        text: cleanText,
+        media: media ?? part.media,
+      };
+    });
+
     return {
       id: questionId,
       leadin,
-      parts: item.parts as BonusPart[],
+      leadinMedia,
+      parts,
     };
   } else {
     // Original format - create the 3 parts explicitly
@@ -74,10 +247,14 @@ function processBonusDict(item: Record<string, unknown>): BonusQuestion {
       const answerlineKey = `answerline${i + 1}`;
 
       if (item[partKey] && item[answerKey]) {
+        const rawPartText = String(item[partKey]);
+        const { cleanText, media } = extractBonusMedia(rawPartText, questionFile);
+
         parts.push({
-          text: String(item[partKey]),
+          text: cleanText,
           answer: String(item[answerlineKey] || item[answerKey]),
           answer_refs: parseAnswerRefs(String(item[answerKey])),
+          media,
         });
       }
     }
@@ -85,6 +262,7 @@ function processBonusDict(item: Record<string, unknown>): BonusQuestion {
     return {
       id: questionId,
       leadin,
+      leadinMedia,
       parts,
     };
   }
@@ -93,35 +271,44 @@ function processBonusDict(item: Record<string, unknown>): BonusQuestion {
 /**
  * Load data from a CSV file
  */
-function loadCsv<T>(filePath: string, mapper: (item: Record<string, unknown>) => T): T[] {
+function loadCsv<T>(
+  filePath: string,
+  mapper: (item: Record<string, unknown>, filePath: string) => T
+): T[] {
   const content = fs.readFileSync(filePath, 'utf-8');
   const records = parse(content, {
     columns: true,
     skip_empty_lines: true,
     trim: true,
   }) as Record<string, unknown>[];
-  return records.map(mapper);
+  return records.map((item) => mapper(item, filePath));
 }
 
 /**
  * Load data from a JSONL file
  */
-function loadJsonl<T>(filePath: string, mapper: (item: Record<string, unknown>) => T): T[] {
+function loadJsonl<T>(
+  filePath: string,
+  mapper: (item: Record<string, unknown>, filePath: string) => T
+): T[] {
   const content = fs.readFileSync(filePath, 'utf-8');
   const lines = content.split('\n').filter((line) => line.trim());
-  return lines.map((line) => mapper(JSON.parse(line)));
+  return lines.map((line) => mapper(JSON.parse(line), filePath));
 }
 
 /**
  * Load data from a JSON file
  */
-function loadJson<T>(filePath: string, mapper: (item: Record<string, unknown>) => T): T[] {
+function loadJson<T>(
+  filePath: string,
+  mapper: (item: Record<string, unknown>, filePath: string) => T
+): T[] {
   const content = fs.readFileSync(filePath, 'utf-8');
   const data = JSON.parse(content);
   if (Array.isArray(data)) {
-    return data.map(mapper);
+    return data.map((item) => mapper(item, filePath));
   }
-  return [mapper(data)];
+  return [mapper(data, filePath)];
 }
 
 /**
@@ -129,7 +316,7 @@ function loadJson<T>(filePath: string, mapper: (item: Record<string, unknown>) =
  */
 function loadFromFile<T>(
   filePath: string,
-  mapper: (item: Record<string, unknown>) => T
+  mapper: (item: Record<string, unknown>, filePath: string) => T
 ): T[] {
   const ext = path.extname(filePath).toLowerCase();
 

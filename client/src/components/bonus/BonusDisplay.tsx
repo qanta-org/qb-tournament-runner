@@ -37,6 +37,34 @@ export function BonusDisplay() {
         >
           <p className="text-xs text-gray-500 mb-1 uppercase tracking-wide">Lead-in</p>
           <p className="text-lg text-gray-800">{bonus.leadin}</p>
+          {(bonus.leadinMedia?.imageUrl || bonus.leadinMedia?.audioUrl) && (
+            <div className="mt-3 flex flex-col sm:flex-row gap-3 items-start">
+              {bonus.leadinMedia.imageUrl && (
+                <div className="w-full sm:w-1/2 border rounded-md overflow-hidden bg-black/5">
+                  <img
+                    src={bonus.leadinMedia.imageUrl}
+                    alt="Bonus lead-in image"
+                    className="w-full h-48 object-contain bg-black/10"
+                  />
+                </div>
+              )}
+              {bonus.leadinMedia.audioUrl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const audio = new Audio(bonus.leadinMedia!.audioUrl!);
+                    audio.play().catch(() => {
+                      // ignore playback errors
+                    });
+                  }}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-blue-50 text-blue-700 text-sm font-medium border border-blue-100"
+                >
+                  <span>▶</span>
+                  <span>{bonus.leadinMedia.audioDisplayText || 'Play audio'}</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Current part */}
@@ -63,8 +91,44 @@ export function BonusDisplay() {
             </div>
 
             {/* Part content */}
-            <div className="text-lg text-gray-800">
-              {bonus.parts[currentPart].text}
+            <div className="space-y-3">
+              <div className="text-lg text-gray-800">
+                {bonus.parts[currentPart].text}
+              </div>
+              {(bonus.parts[currentPart].media?.imageUrl ||
+                bonus.parts[currentPart].media?.audioUrl) && (
+                <div className="flex flex-col sm:flex-row gap-3 items-start">
+                  {bonus.parts[currentPart].media?.imageUrl && (
+                    <div className="w-full sm:w-1/2 border rounded-md overflow-hidden bg-black/5">
+                      <img
+                        src={bonus.parts[currentPart].media!.imageUrl!}
+                        alt={`Bonus part ${currentPart + 1} image`}
+                        className="w-full h-48 object-contain bg-black/10"
+                      />
+                    </div>
+                  )}
+                  {bonus.parts[currentPart].media?.audioUrl && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const audio = new Audio(
+                          bonus.parts[currentPart].media!.audioUrl!
+                        );
+                        audio.play().catch(() => {
+                          // ignore playback errors
+                        });
+                      }}
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-blue-50 text-blue-700 text-sm font-medium border border-blue-100"
+                    >
+                      <span>▶</span>
+                      <span>
+                        {bonus.parts[currentPart].media!.audioDisplayText ||
+                          'Play audio'}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </>
         )}
