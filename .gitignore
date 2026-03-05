@@ -1,3 +1,10 @@
 # Dependencies
 node_modules/
 dist/
+
+# Data
+data_prev/
+data/
+
+# Runs
+runs/

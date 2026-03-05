@@ -235,17 +235,17 @@ export function PlayerView() {
                 </div>
               )}
 
-              {/* Image below question text for player view */}
+              {/* Image below question text */}
               {lastRevealedImageToken && (
-                <div className="mt-6">
-                  <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                <div className="mt-6 flex flex-col items-center">
+                  <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2 w-full">
                     Image
                   </div>
-                  <div className="w-full rounded-lg border border-gray-700 bg-gray-900 flex items-center justify-center overflow-hidden min-h-[220px] max-h-[360px]">
+                  <div className="w-full rounded-lg border border-gray-700 bg-gray-900 flex items-center justify-center overflow-hidden min-h-[30vh] max-h-[55vh]">
                     <img
                       src={lastRevealedImageToken.assetUrl}
                       alt={lastRevealedImageToken.hash || 'multimodal image'}
-                      className="w-full h-full object-contain"
+                      className="max-w-full max-h-full object-contain"
                     />
                   </div>
                 </div>
@@ -539,32 +539,19 @@ function PlayerBonusDisplay() {
         >
           <div className="text-xs text-gray-500 mb-1 uppercase tracking-wide">Lead-in</div>
           <div>{bonus.leadin}</div>
-          {(bonus.leadinMedia?.imageUrl || bonus.leadinMedia?.audioUrl) && (
-            <div className="mt-3 flex flex-col md:flex-row gap-3 items-start">
-              {bonus.leadinMedia.imageUrl && (
-                <div className="w-full md:w-1/2 border border-gray-700 rounded-md overflow-hidden bg-black/40">
-                  <img
-                    src={bonus.leadinMedia.imageUrl}
-                    alt="Bonus lead-in image"
-                    className="w-full h-40 object-contain bg-black"
-                  />
-                </div>
-              )}
-              {bonus.leadinMedia.audioUrl && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const audio = new Audio(bonus.leadinMedia!.audioUrl!);
-                    audio.play().catch(() => {
-                      // ignore playback errors
-                    });
-                  }}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-blue-600/20 text-blue-200 text-sm font-medium border border-blue-500/40"
-                >
-                  <span>▶</span>
-                  <span>{bonus.leadinMedia.audioDisplayText || 'Play audio'}</span>
-                </button>
-              )}
+          {bonus.leadinMedia?.audioUrl && (
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const audio = new Audio(bonus.leadinMedia!.audioUrl!);
+                  audio.play().catch(() => {});
+                }}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-blue-600/20 text-blue-200 text-sm font-medium border border-blue-500/40"
+              >
+                <span>▶</span>
+                <span>{bonus.leadinMedia.audioDisplayText || 'Play audio'}</span>
+              </button>
             </div>
           )}
         </div>
@@ -582,38 +569,21 @@ function PlayerBonusDisplay() {
               <div className="text-xl text-gray-100">
                 {bonus.parts[currentPart]?.text}
               </div>
-              {(bonus.parts[currentPart].media?.imageUrl ||
-                bonus.parts[currentPart].media?.audioUrl) && (
-                <div className="flex flex-col md:flex-row gap-3 items-start">
-                  {bonus.parts[currentPart].media?.imageUrl && (
-                    <div className="w-full md:w-1/2 border border-gray-700 rounded-md overflow-hidden bg-black/40">
-                      <img
-                        src={bonus.parts[currentPart].media!.imageUrl!}
-                        alt={`Bonus part ${currentPart + 1} image`}
-                        className="w-full h-40 object-contain bg-black"
-                      />
-                    </div>
-                  )}
-                  {bonus.parts[currentPart].media?.audioUrl && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const audio = new Audio(
-                          bonus.parts[currentPart].media!.audioUrl!
-                        );
-                        audio.play().catch(() => {
-                          // ignore playback errors
-                        });
-                      }}
-                      className="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-blue-600/20 text-blue-200 text-sm font-medium border border-blue-500/40"
-                    >
-                      <span>▶</span>
-                      <span>
-                        {bonus.parts[currentPart].media!.audioDisplayText ||
-                          'Play audio'}
-                      </span>
-                    </button>
-                  )}
+              {bonus.parts[currentPart].media?.audioUrl && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const audio = new Audio(bonus.parts[currentPart].media!.audioUrl!);
+                      audio.play().catch(() => {});
+                    }}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-blue-600/20 text-blue-200 text-sm font-medium border border-blue-500/40"
+                  >
+                    <span>▶</span>
+                    <span>
+                      {bonus.parts[currentPart].media!.audioDisplayText || 'Play audio'}
+                    </span>
+                  </button>
                 </div>
               )}
             </div>
@@ -630,6 +600,30 @@ function PlayerBonusDisplay() {
             )}
           </div>
         )}
+
+        {/* Unified image box: part image replaces lead-in image when present */}
+        {(() => {
+          const leadinImg = bonus.leadinMedia?.imageUrl;
+          const partImg = showPart && currentPart < totalParts
+            ? bonus.parts[currentPart].media?.imageUrl
+            : undefined;
+          const displayImg = partImg ?? leadinImg;
+          if (!displayImg) return null;
+          return (
+            <div className="flex flex-col items-center">
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2 w-full">
+                Image
+              </div>
+              <div className="w-full rounded-lg border border-gray-700 bg-gray-900 flex items-center justify-center overflow-hidden min-h-[30vh] max-h-[55vh]">
+                <img
+                  src={displayImg}
+                  alt={partImg ? `Bonus part ${currentPart + 1} image` : 'Bonus lead-in image'}
+                  className="max-w-full max-h-full object-contain"
+                />
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Progress indicator */}
         <div className="flex items-center gap-3 pt-4 border-t border-gray-700">

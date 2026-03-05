@@ -76,8 +76,22 @@ Open **http://localhost:5173** in your browser.
 
 ### Prerequisites
 
-- **Node.js**: v20+ recommended
-- **npm**: v10+ recommended
+- **Node.js**: **v18.18.0 or higher** (v20+ recommended)
+- **npm**: **v9 or higher** (v10+ recommended)
+
+#### Installing Node.js and npm
+
+- **macOS / Linux (recommended)**: Use a version manager like [`nvm`](https://github.com/nvm-sh/nvm) to install and switch Node versions:
+
+  ```bash
+  # Install nvm (see nvm README for latest command)
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+  # Then in a new shell:
+  nvm install 20
+  nvm use 20
+  ```
+
+- **Windows**: Use the official Node.js installer from [`https://nodejs.org`](https://nodejs.org) (choose an LTS release, 20+), or a version manager like [`nvm-windows`](https://github.com/coreybutler/nvm-windows).
 
 ### One-Command Dev Setup
 
