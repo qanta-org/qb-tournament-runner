@@ -5,6 +5,8 @@ import type {
   GameConfig,
   GameState,
   AnswerRuling,
+  AIBuzzMode,
+  BonusPartDecision,
 } from '../../shared/types.js';
 import { filterStateForPlayer } from '../../shared/types.js';
 import { GameEngine } from './engine.js';
@@ -304,14 +306,34 @@ export function setupGameHandlers(
     if (engine) engine.adjustPoints(data);
   });
 
-  socket.on('player:mute_toggle', (playerId: string) => {
+  socket.on('moderator:set_ai_buzz_mode', (data: { playerId: string; mode: AIBuzzMode }) => {
     if (!roomManager.isModerator(socket.id)) return;
 
     const room = roomManager.getRoomForSocket(socket.id);
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) engine.toggleMute(playerId);
+    if (engine) engine.setAiBuzzMode(data.playerId, data.mode);
+  });
+
+  socket.on('moderator:set_autonomous_k', (data: { playerId: string; k: number }) => {
+    if (!roomManager.isModerator(socket.id)) return;
+
+    const room = roomManager.getRoomForSocket(socket.id);
+    if (!room) return;
+
+    const engine = gameEngines.get(room.code);
+    if (engine) engine.setAutonomousK(data.playerId, data.k);
+  });
+
+  socket.on('moderator:ai_buzz', (playerId: string) => {
+    if (!roomManager.isModerator(socket.id)) return;
+
+    const room = roomManager.getRoomForSocket(socket.id);
+    if (!room) return;
+
+    const engine = gameEngines.get(room.code);
+    if (engine) engine.handleAIManualBuzz(playerId);
   });
 
   socket.on('bonus:advance', () => {
@@ -324,24 +346,34 @@ export function setupGameHandlers(
     if (engine) engine.advanceBonusStage();
   });
 
-  socket.on('bonus:human_response', (responses: Record<string, string>) => {
+  socket.on('bonus:next_part', () => {
     if (!roomManager.isModerator(socket.id)) return;
 
     const room = roomManager.getRoomForSocket(socket.id);
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) engine.handleBonusHumanResponse(responses);
+    if (engine) engine.advanceBonusPartReveal();
   });
 
-  socket.on('bonus:final_answer', (answer: string) => {
+  socket.on('bonus:reveal_ai', () => {
     if (!roomManager.isModerator(socket.id)) return;
 
     const room = roomManager.getRoomForSocket(socket.id);
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) engine.handleBonusFinalAnswer(answer);
+    if (engine) engine.revealBonusAi();
+  });
+
+  socket.on('bonus:part_result', (data: { decision: BonusPartDecision; correct: boolean; answer: string }) => {
+    if (!roomManager.isModerator(socket.id)) return;
+
+    const room = roomManager.getRoomForSocket(socket.id);
+    if (!room) return;
+
+    const engine = gameEngines.get(room.code);
+    if (engine) engine.handleBonusPartResult(data);
   });
 
   socket.on('moderator:add_player', (data: { teamId: 'team_a' | 'team_b'; player: any }, callback?: (result: { success: boolean; error?: string }) => void) => {

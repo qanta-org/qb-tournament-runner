@@ -14,12 +14,17 @@ import type {
   QuestionResult,
   QuestionOutcome,
   TossupToken,
+  AIBuzzMode,
+  BonusPartDecision,
 } from '../../shared/types.js';
+import { aiTossupPoints, bonusConsultPoints } from '../../shared/scoring.js';
 import { createInitialGameState } from '../../shared/types.js';
 import { Questions } from '../data/questions.js';
 import { Buzzes } from '../data/buzzes.js';
 
-const BONUS_STAGES = ['leadin', 'question', 'human_response', 'final_answer'] as const;
+// Keyboard keys assigned to AI players for semi-autonomous (human-triggered) buzzing.
+// Kept distinct from the human buzzer keys (1-9) to avoid collisions.
+const AI_BUZZER_KEY_POOL = ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'Z', 'X', 'C', 'V', 'B', 'N'];
 
 type StateUpdateCallback = (state: GameState) => void;
 
@@ -151,6 +156,59 @@ export class GameEngine {
 
     setupTeam('team_a', this.config.team_a);
     setupTeam('team_b', this.config.team_b);
+
+    // Assign keyboard keys to AI players (used for semi-autonomous human-triggered buzzing).
+    // Authoritative, global assignment so keys never collide across teams or with humans.
+    this.assignAiBuzzerKeys();
+  }
+
+  /**
+   * Backfill a unique buzzer key for every AI player from a distinct key pool.
+   * Mutates the shared config so the assigned keys are emitted to clients.
+   */
+  private assignAiBuzzerKeys(): void {
+    const usedKeys = new Set<string>(this.buzzerKeyToPlayerId.keys());
+    let poolIndex = 0;
+
+    const aiPlayers = [
+      ...this.config.team_a.players.filter((p) => p.type === 'ai'),
+      ...this.config.team_b.players.filter((p) => p.type === 'ai'),
+    ];
+
+    for (const player of aiPlayers) {
+      const kwargs = player.extra_kwargs as { buzzer_key?: string };
+      const existing = kwargs.buzzer_key?.toUpperCase();
+      if (existing && !usedKeys.has(existing)) {
+        usedKeys.add(existing);
+        this.buzzerKeyToPlayerId.set(existing, player.player_id);
+        continue;
+      }
+
+      // Find the next free key in the pool
+      while (poolIndex < AI_BUZZER_KEY_POOL.length && usedKeys.has(AI_BUZZER_KEY_POOL[poolIndex])) {
+        poolIndex++;
+      }
+      if (poolIndex >= AI_BUZZER_KEY_POOL.length) {
+        // Ran out of keys; leave this AI without a semi-auto key.
+        continue;
+      }
+      const key = AI_BUZZER_KEY_POOL[poolIndex];
+      poolIndex++;
+      usedKeys.add(key);
+      kwargs.buzzer_key = key;
+      this.buzzerKeyToPlayerId.set(key, player.player_id);
+    }
+  }
+
+  /** Resolve the buzz mode for an AI player (absent => autonomous). */
+  private getAiBuzzMode(playerId: string): AIBuzzMode {
+    return this.state.aiBuzzModes[playerId] ?? 'autonomous';
+  }
+
+  /** Resolve the autonomous-after-k threshold for an AI player (absent => config default). */
+  private getAiAutonomousK(playerId: string): number {
+    const k = this.state.aiAutonomousK[playerId] ?? this.config.autonomous_default_k ?? 1;
+    return Math.max(1, k);
   }
 
   private plainTextFromTokens(tokens: TossupToken[]): string {
@@ -288,7 +346,7 @@ export class GameEngine {
     this.state.bonusQuestion = null;
     this.state.currentBonusPartAnswer = null;
     this.state.scores = { team_a: 0, team_b: 0 };
-    this.state.mutedPlayers = [];
+    this.initAiBuzzModes();
     this.nextQuestion();
   }
 
@@ -451,6 +509,9 @@ export class GameEngine {
   private checkForAIBuzzes(guesses: Map<string, TossupResponse>): void {
     const validBuzzes: Array<[string, TossupResponse]> = [];
 
+    // 0-indexed position of the token currently being processed.
+    const currentPosition = this.state.tokenIndex;
+
     for (const [system, guess] of guesses) {
       const playerId = this.tossupModelToPlayer.get(system);
       if (!playerId) continue;
@@ -458,8 +519,15 @@ export class GameEngine {
       const playerTeam = this.teamAssignment.get(playerId)!;
       const otherTeam = playerTeam === 'team_a' ? 'team_b' : 'team_a';
 
-      // Skip if muted
-      if (this.state.mutedPlayers.includes(playerId)) continue;
+      // Buzz mode gating (QANTA 2026)
+      const mode = this.getAiBuzzMode(playerId);
+      // Muted AIs never buzz; semi-autonomous AIs only buzz when a human triggers them.
+      if (mode === 'muted' || mode === 'semi') continue;
+      // Autonomous AIs cannot buzz before their own k-th token is revealed.
+      if (mode === 'autonomous') {
+        const k = this.getAiAutonomousK(playerId);
+        if (currentPosition < k - 1) continue;
+      }
 
       // Skip if team already buzzed
       if (this.state.teamBuzzed[playerTeam]) continue;
@@ -554,6 +622,41 @@ export class GameEngine {
   }
 
   /**
+   * Handle a human-triggered buzz on behalf of a semi-autonomous AI (QANTA 2026).
+   * Uses the AI's most recent guess at the current position, even if buzz === 0.
+   */
+  handleAIManualBuzz(playerId: string): { buzzed: boolean } {
+    if (this.state.phase !== 'tossup_streaming') return { buzzed: false };
+
+    const player = this.players.get(playerId);
+    const playerTeam = this.teamAssignment.get(playerId);
+    if (!player || player.type !== 'ai' || !playerTeam) return { buzzed: false };
+
+    // Only valid for AIs explicitly set to semi-autonomous mode.
+    if (this.getAiBuzzMode(playerId) !== 'semi') return { buzzed: false };
+
+    // Team must not have already buzzed, and the tossup must still be live.
+    if (this.state.teamBuzzed[playerTeam]) return { buzzed: false };
+    if (!this.tossupInProgress()) return { buzzed: false };
+
+    const kwargs = player.extra_kwargs as { tossup_model: string };
+    // Latest guess at or before the current revealed position (use it even if buzz === 0).
+    const position = Math.max(0, this.state.tokenIndex - 1);
+    const guesses = this.buzzes.getTossupGuesses(this.state.currentTossupId!, position);
+    const guess = guesses.get(kwargs.tossup_model);
+
+    this.state.buzzingPlayer = playerId;
+    this.state.currentGuesses = Array.from(guesses.values());
+    this.state.teamBuzzed[playerTeam] = true;
+    this.state.buzzingPlayerGuess = guess ? guess.guess : '';
+    this.state.phase = 'answer_review';
+
+    this.stopAutoStream();
+    this.emitState();
+    return { buzzed: true };
+  }
+
+  /**
    * Handle answer ruling from moderator
    */
   handleAnswerRuling(ruling: AnswerRuling, answer: string): void {
@@ -582,6 +685,10 @@ export class GameEngine {
 
     if (isCorrect) {
       points = this.state.tossupPointsValue;
+      // QANTA 2026: deflate a correct AI buzz by its model weight class.
+      if (player.type === 'ai') {
+        points = aiTossupPoints(this.config, points, player);
+      }
     } else if (ruling === 'reject') {
       // Penalty depends on whether other team already buzzed
       points = this.state.teamBuzzed[otherTeam]
@@ -727,6 +834,8 @@ export class GameEngine {
     this.state.bonusStage = 'leadin';
     this.state.bonusQuestion = bonus;
     this.state.bonusResponses = [];
+    this.state.bonusPartDecision = 'pending';
+    this.state.bonusAiRevealed = false;
 
     // Clear tossup-related state when starting a bonus
     this.state.buzzingPlayer = null;
@@ -760,99 +869,68 @@ export class GameEngine {
   }
 
   /**
-   * Advance to the next bonus stage
+   * Advance from the bonus lead-in to the first part.
+   * Under QANTA 2026 rules, per-part progression is driven by explicit decisions
+   * (see `handleBonusPartResult`), so this only handles leadin -> question.
    */
   advanceBonusStage(): void {
-    const currentIndex = BONUS_STAGES.indexOf(this.state.bonusStage);
-    if (currentIndex === -1 || currentIndex >= BONUS_STAGES.length - 1) {
+    if (this.state.bonusStage !== 'leadin') {
       return;
     }
-
-    const nextStage = BONUS_STAGES[currentIndex + 1];
-    this.state.bonusStage = nextStage;
-
-    if (nextStage === 'leadin') {
-      this.state.phase = 'bonus_leadin';
-    } else if (nextStage === 'question') {
-      this.state.phase = 'bonus_part';
-    } else if (nextStage === 'human_response') {
-      this.state.phase = 'bonus_human_response';
-    } else if (nextStage === 'final_answer') {
-      this.state.phase = 'bonus_final_answer';
-      // Get AI responses for this part
-      const partNum = this.state.currentBonusPart + 1; // 1-indexed
-      const responses = this.buzzes.getBonusGuesses(this.state.currentBonusId!, partNum);
-
-      // Filter to only the owning team's responses
-      const filteredResponses = responses.filter((r) => {
-        const playerId = this.bonusModelToPlayer.get(r.system);
-        if (!playerId) return false;
-        const team = this.teamAssignment.get(playerId);
-        return team === this.state.bonusOwner;
-      });
-
-      this.state.bonusResponses = filteredResponses;
-    }
-
+    this.state.bonusStage = 'question';
+    this.state.phase = 'bonus_part';
+    this.state.bonusPartDecision = 'pending';
+    this.state.bonusAiRevealed = false;
     this.emitState();
   }
 
-  /**
-   * Handle human responses for bonus
-   */
-  handleBonusHumanResponse(responses: Record<string, string>): void {
-    // Store in record
-    if (this.currentRecord?.bonusResponses) {
-      // Will be completed in final answer
-    }
-
-    // Auto-advance to final answer
-    this.state.bonusStage = 'final_answer';
-    this.state.phase = 'bonus_final_answer';
-
-    // Get AI responses
-    const partNum = this.state.currentBonusPart + 1;
-    const aiResponses = this.buzzes.getBonusGuesses(this.state.currentBonusId!, partNum);
-    const filteredResponses = aiResponses.filter((r) => {
+  /** Load the owning team's AI responses for the current bonus part. */
+  private loadOwningTeamBonusResponses(): BonusResponse[] {
+    const partNum = this.state.currentBonusPart + 1; // 1-indexed
+    const responses = this.buzzes.getBonusGuesses(this.state.currentBonusId!, partNum);
+    return responses.filter((r) => {
       const playerId = this.bonusModelToPlayer.get(r.system);
       if (!playerId) return false;
       return this.teamAssignment.get(playerId) === this.state.bonusOwner;
     });
+  }
 
-    this.state.bonusResponses = filteredResponses;
+  /**
+   * QANTA 2026: reveal the owning team's AI responses for the current bonus part.
+   * The team consults the AI before submitting (consult path -> reduced credit).
+   */
+  revealBonusAi(): void {
+    if (this.state.phase !== 'bonus_part') return;
+    this.state.bonusAiRevealed = true;
+    this.state.bonusResponses = this.loadOwningTeamBonusResponses();
     this.emitState();
   }
 
   /**
-   * Handle final answer for bonus part
-   * @param answer - The answer string. Empty string means reject (0 points).
+   * QANTA 2026: resolve a bonus part via one of three decisions.
+   * - own: full points if correct, else 0.
+   * - consult_ai: `bonus_ai_consult_factor` * full points if correct, else 0.
+   * - abstain: `bonus_abstain_points` if the moderator confirms nobody was correct, else 0.
    */
-  handleBonusFinalAnswer(answer: string): void {
+  handleBonusPartResult(data: { decision: BonusPartDecision; correct: boolean; answer: string }): void {
+    if (this.state.phase !== 'bonus_part' || !this.state.bonusOwner) return;
+
+    const { decision, correct, answer } = data;
     const partIndex = this.state.currentBonusPart;
+    const fullPoints = this.config.bonus_part_points;
+
     let points = 0;
+    if (decision === 'own') {
+      points = correct ? fullPoints : 0;
+    } else if (decision === 'consult_ai') {
+      const owningPlayers = this.config[this.state.bonusOwner].players;
+      points = correct ? bonusConsultPoints(this.config, owningPlayers) : 0;
+    } else if (decision === 'abstain') {
+      points = correct ? (this.config.bonus_abstain_points ?? 1) : 0;
+    }
 
-    // Empty answer means reject (moderator clicked Reject button)
-    const isRejected = !answer || answer.trim() === '';
-
-    if (isRejected) {
-      // Rejected - no points
-      points = 0;
-    } else if (this.config.auto_evaluate) {
-      // Auto-evaluate: check if answer is correct
-      const isCorrect = this.questions.checkBonusAnswer(
-        this.state.currentBonusId!,
-        partIndex,
-        answer
-      );
-      points = isCorrect ? this.config.bonus_part_points : 0;
-
-      if (isCorrect) {
-        this.state.scores[this.state.bonusOwner!] += points;
-      }
-    } else {
-      // Manual mode with non-empty answer = Accept
-      points = this.config.bonus_part_points;
-      this.state.scores[this.state.bonusOwner!] += points;
+    if (points > 0) {
+      this.state.scores[this.state.bonusOwner] += points;
     }
 
     // Record the part
@@ -865,12 +943,33 @@ export class GameEngine {
         points,
         responses: {},
         finalGuess: answer,
+        decision,
+        aiRevealed: this.state.bonusAiRevealed,
       });
 
       if (points > 0) {
         this.currentRecord.bonusResponses.correctParts.push(partIndex);
       }
     }
+
+    // Enter the per-part reveal screen instead of jumping straight ahead.
+    // Always reveal the AI responses (and the answer line / answer image) so the
+    // room sees the resolution before advancing to the next part or tossup.
+    this.state.phase = 'bonus_part_reveal';
+    this.state.bonusStage = 'part_reveal';
+    this.state.bonusPartDecision = decision;
+    this.state.bonusAiRevealed = true;
+    this.state.bonusResponses = this.loadOwningTeamBonusResponses();
+
+    this.emitState();
+  }
+
+  /**
+   * QANTA 2026: advance from the per-part reveal screen to the next part, or
+   * finish the bonus and move on to the next tossup.
+   */
+  advanceBonusPartReveal(): void {
+    if (this.state.phase !== 'bonus_part_reveal') return;
 
     // Move to next part or end bonus
     this.state.currentBonusPart++;
@@ -879,32 +978,31 @@ export class GameEngine {
       this.state.bonusQuestion &&
       this.state.currentBonusPart < this.state.bonusQuestion.parts.length
     ) {
-      // Next part - go to question stage (leadin is only shown once)
+      // Next part - reset per-part decision state (leadin is only shown once)
       this.state.bonusStage = 'question';
       this.state.phase = 'bonus_part';
       this.state.bonusResponses = [];
-
-      // Update current part answer for moderator
+      this.state.bonusPartDecision = 'pending';
+      this.state.bonusAiRevealed = false;
       this.state.currentBonusPartAnswer = this.state.bonusQuestion.parts[this.state.currentBonusPart].answer;
     } else {
       // End bonus, go to next tossup
-      // Calculate total bonus score from all parts
       let totalBonusScore = 0;
       if (this.currentRecord?.bonusResponses) {
         totalBonusScore = this.currentRecord.bonusResponses.parts.reduce((sum, part) => sum + part.points, 0);
       }
 
-      // Store score for replay tracking
       const previousScore = {
         team_a: this.state.bonusOwner === 'team_a' ? totalBonusScore : 0,
         team_b: this.state.bonusOwner === 'team_b' ? totalBonusScore : 0,
       };
 
-      // Update bonus result with the team that owned it
       if (this.state.bonusOwner) {
         this.updateBonusResult(this.state.currentBonusNum - 1, this.state.bonusOwner, previousScore);
       }
       this.state.currentBonusPartAnswer = null;
+      this.state.bonusPartDecision = 'pending';
+      this.state.bonusAiRevealed = false;
       this.nextQuestion();
     }
 
@@ -996,16 +1094,42 @@ export class GameEngine {
   }
 
   /**
-   * Toggle player mute
+   * Set the buzz mode for an AI player (mute / autonomous / semi).
    */
-  toggleMute(playerId: string): void {
-    const index = this.state.mutedPlayers.indexOf(playerId);
-    if (index === -1) {
-      this.state.mutedPlayers.push(playerId);
-    } else {
-      this.state.mutedPlayers.splice(index, 1);
-    }
+  setAiBuzzMode(playerId: string, mode: AIBuzzMode): void {
+    const player = this.players.get(playerId);
+    if (!player || player.type !== 'ai') return;
+    this.state.aiBuzzModes[playerId] = mode;
     this.emitState();
+  }
+
+  /**
+   * QANTA 2026: update a single AI's "autonomous after k tokens" threshold live.
+   * Takes effect on the next buzz check.
+   */
+  setAutonomousK(playerId: string, k: number): void {
+    const player = this.players.get(playerId);
+    if (!player || player.type !== 'ai') return;
+    const next = Math.max(1, Math.floor(Number.isFinite(k) ? k : 1));
+    this.state.aiAutonomousK[playerId] = next;
+    this.emitState();
+  }
+
+  /**
+   * Initialize default buzz modes (autonomous) for every AI player.
+   */
+  private initAiBuzzModes(): void {
+    const modes: Record<string, AIBuzzMode> = {};
+    const ks: Record<string, number> = {};
+    const defaultK = Math.max(1, this.config.autonomous_default_k ?? 1);
+    for (const player of [...this.config.team_a.players, ...this.config.team_b.players]) {
+      if (player.type === 'ai') {
+        modes[player.player_id] = 'autonomous';
+        ks[player.player_id] = defaultK;
+      }
+    }
+    this.state.aiBuzzModes = modes;
+    this.state.aiAutonomousK = ks;
   }
 
   /**
@@ -1118,10 +1242,12 @@ export class GameEngine {
       this.buzzerKeyToPlayerId.delete(kwargs.buzzer_key.toUpperCase());
     }
 
-    // Remove from muted players if present
-    const mutedIndex = this.state.mutedPlayers.indexOf(playerId);
-    if (mutedIndex !== -1) {
-      this.state.mutedPlayers.splice(mutedIndex, 1);
+    // Remove from AI buzz modes if present
+    if (this.state.aiBuzzModes[playerId]) {
+      delete this.state.aiBuzzModes[playerId];
+    }
+    if (this.state.aiAutonomousK[playerId] !== undefined) {
+      delete this.state.aiAutonomousK[playerId];
     }
 
     console.log(`Player removed mid-game: ${player.name} from ${team.name}`);

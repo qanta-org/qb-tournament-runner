@@ -100,6 +100,7 @@ export function TeamBuilder({
         : {
             tossup_model: rosterPlayer.tossup_model || '',
             bonus_model: rosterPlayer.bonus_model || rosterPlayer.tossup_model || '',
+            weight_class: rosterPlayer.weight_class,
           },
     };
 
@@ -156,6 +157,7 @@ export function TeamBuilder({
           : {
               tossup_model: rosterPlayer.tossup_model || '',
               bonus_model: rosterPlayer.bonus_model || rosterPlayer.tossup_model || '',
+              weight_class: rosterPlayer.weight_class,
             },
       });
     }

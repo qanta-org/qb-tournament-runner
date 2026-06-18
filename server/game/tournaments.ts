@@ -560,6 +560,24 @@ class TournamentManagerClass {
       tossup_penalty_value_second_team: t.gameSettings.tossup_penalty_value_second_team ?? 0,
       bonus_part_points: t.gameSettings.bonus_part_points ?? 10,
       multimodal_reveal_lockout_seconds: t.gameSettings.multimodal_reveal_lockout_seconds ?? 5,
+      ai_tossup_score_factors:
+        t.gameSettings.ai_tossup_score_factors ?? {
+          lightweight: 1.0,
+          midweight: 0.8,
+          heavyweight: 0.4,
+        },
+      tossup_deflation_mode: t.gameSettings.tossup_deflation_mode ?? 'weighted',
+      tossup_static_deflation: t.gameSettings.tossup_static_deflation ?? 5,
+      autonomous_default_k: t.gameSettings.autonomous_default_k ?? 1,
+      bonus_ai_consult_factor: t.gameSettings.bonus_ai_consult_factor ?? 0.5,
+      bonus_deflation_mode: t.gameSettings.bonus_deflation_mode ?? 'static',
+      bonus_static_deflation: t.gameSettings.bonus_static_deflation ?? 5,
+      bonus_weight_deflation: t.gameSettings.bonus_weight_deflation ?? {
+        lightweight: 1,
+        midweight: 2,
+        heavyweight: 3,
+      },
+      bonus_abstain_points: t.gameSettings.bonus_abstain_points ?? 1,
     } as GameConfig;
 
     roomManager.setGameConfig(room.code, config);

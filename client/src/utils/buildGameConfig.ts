@@ -43,6 +43,34 @@ export function buildGameConfig({
       overrides.multimodal_reveal_lockout_seconds ??
       base.multimodal_reveal_lockout_seconds ??
       5,
+    ai_tossup_score_factors:
+      overrides.ai_tossup_score_factors ??
+      base.ai_tossup_score_factors ?? {
+        lightweight: 1.0,
+        midweight: 0.8,
+        heavyweight: 0.4,
+      },
+    tossup_deflation_mode:
+      overrides.tossup_deflation_mode ?? base.tossup_deflation_mode ?? 'weighted',
+    tossup_static_deflation:
+      overrides.tossup_static_deflation ?? base.tossup_static_deflation ?? 5,
+    autonomous_default_k:
+      overrides.autonomous_default_k ?? base.autonomous_default_k ?? 1,
+    bonus_ai_consult_factor:
+      overrides.bonus_ai_consult_factor ?? base.bonus_ai_consult_factor ?? 0.5,
+    bonus_deflation_mode:
+      overrides.bonus_deflation_mode ?? base.bonus_deflation_mode ?? 'static',
+    bonus_static_deflation:
+      overrides.bonus_static_deflation ?? base.bonus_static_deflation ?? 5,
+    bonus_weight_deflation:
+      overrides.bonus_weight_deflation ??
+      base.bonus_weight_deflation ?? {
+        lightweight: 1,
+        midweight: 2,
+        heavyweight: 3,
+      },
+    bonus_abstain_points:
+      overrides.bonus_abstain_points ?? base.bonus_abstain_points ?? 1,
     team_a: teamA,
     team_b: teamB,
     tossup_file: tossupFile,

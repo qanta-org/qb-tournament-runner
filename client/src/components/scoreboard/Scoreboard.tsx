@@ -14,7 +14,8 @@ export function Scoreboard() {
         score={gameState.scores.team_a}
         hasBuzzed={gameState.teamBuzzed.team_a}
         buzzingPlayer={gameState.buzzingPlayer}
-        mutedPlayers={gameState.mutedPlayers}
+        aiBuzzModes={gameState.aiBuzzModes}
+        aiAutonomousK={gameState.aiAutonomousK}
       />
       <TeamPanel
         team={gameConfig.team_b}
@@ -22,7 +23,8 @@ export function Scoreboard() {
         score={gameState.scores.team_b}
         hasBuzzed={gameState.teamBuzzed.team_b}
         buzzingPlayer={gameState.buzzingPlayer}
-        mutedPlayers={gameState.mutedPlayers}
+        aiBuzzModes={gameState.aiBuzzModes}
+        aiAutonomousK={gameState.aiAutonomousK}
       />
     </div>
   );

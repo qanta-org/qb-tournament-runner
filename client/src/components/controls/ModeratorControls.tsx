@@ -3,6 +3,7 @@ import { useGame } from '../../context/GameContext';
 import { useKeyboardBuzzer } from '../../hooks/useKeyboardBuzzer';
 import { AdjustPointsDialog } from '../dialogs/AdjustPointsDialog';
 import { REVEAL_LOCKOUT_TICK_INTERVAL_MS } from '../../constants/time';
+import { bonusConsultPoints } from '../../../../shared/scoring';
 
 export function ModeratorControls() {
   const {
@@ -10,11 +11,13 @@ export function ModeratorControls() {
     gameConfig,
     nextWord,
     advanceBonusStage,
-    submitBonusFinalAnswer,
+    advanceBonusPart,
+    revealBonusAi,
+    submitBonusPartResult,
   } = useGame();
 
   const [showAdjustDialog, setShowAdjustDialog] = useState(false);
-  const [finalAnswer, setFinalAnswer] = useState('');
+  const [partAnswer, setPartAnswer] = useState('');
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   // Keyboard buzzer hook
@@ -23,15 +26,18 @@ export function ModeratorControls() {
   if (!gameConfig) return null;
 
   const isTossupPhase = ['tossup_ready', 'tossup_streaming'].includes(gameState.phase);
-  const isBonusPhase = [
-    'bonus_leadin',
-    'bonus_part',
-    'bonus_human_response',
-    'bonus_final_answer',
-  ].includes(gameState.phase);
+  const isBonusLeadin = gameState.phase === 'bonus_leadin';
+  const isBonusPart = gameState.phase === 'bonus_part';
+  const isBonusPartReveal = gameState.phase === 'bonus_part_reveal';
   const isGameOver = gameState.phase === 'game_over';
   const isRevealLocked =
     !!gameState.revealLockoutUntilMs && nowMs < gameState.revealLockoutUntilMs;
+
+  const fullPoints = gameConfig.bonus_part_points;
+  const owningTeamPlayers = gameState.bonusOwner ? gameConfig[gameState.bonusOwner].players : [];
+  const consultPoints = bonusConsultPoints(gameConfig, owningTeamPlayers);
+  const abstainPoints = gameConfig.bonus_abstain_points ?? 1;
+  const aiRevealed = gameState.bonusAiRevealed;
 
   useEffect(() => {
     if (!gameState.revealLockoutUntilMs) {
@@ -47,31 +53,31 @@ export function ModeratorControls() {
     }
   };
 
-  const handleAdvanceBonus = () => {
-    if (isBonusPhase && gameState.bonusStage !== 'final_answer') {
+  const handleAdvanceLeadin = () => {
+    if (isBonusLeadin) {
       advanceBonusStage();
     }
   };
 
-  const handleSubmitFinalAnswer = () => {
-    if (finalAnswer.trim()) {
-      submitBonusFinalAnswer(finalAnswer.trim());
-      setFinalAnswer('');
+  const totalBonusParts = gameState.bonusQuestion?.parts.length ?? 0;
+  const isLastBonusPart = gameState.currentBonusPart >= totalBonusParts - 1;
+
+  const handleAdvanceReveal = () => {
+    if (isBonusPartReveal) {
+      advanceBonusPart();
     }
   };
 
-  const handleAcceptBonusAnswer = () => {
-    if (finalAnswer.trim()) {
-      // Submit with the answer - server will award points
-      submitBonusFinalAnswer(finalAnswer.trim());
-      setFinalAnswer('');
-    }
-  };
-
-  const handleRejectBonusAnswer = () => {
-    // Submit empty string to indicate rejection - server awards 0 points
-    submitBonusFinalAnswer('');
-    setFinalAnswer('');
+  const submitPart = (
+    decision: 'own' | 'consult_ai' | 'abstain',
+    correct: boolean
+  ) => {
+    submitBonusPartResult({
+      decision,
+      correct,
+      answer: decision === 'abstain' ? '' : partAnswer.trim(),
+    });
+    setPartAnswer('');
   };
 
   // Handle keyboard shortcuts
@@ -80,8 +86,10 @@ export function ModeratorControls() {
       e.preventDefault();
       if (isTossupPhase) {
         handleNextWord();
-      } else if (isBonusPhase) {
-        handleAdvanceBonus();
+      } else if (isBonusLeadin) {
+        handleAdvanceLeadin();
+      } else if (isBonusPartReveal) {
+        handleAdvanceReveal();
       }
     }
   };
@@ -117,55 +125,20 @@ export function ModeratorControls() {
             </button>
           )}
 
-          {/* Advance bonus button */}
-          {isBonusPhase && gameState.bonusStage !== 'final_answer' && (
-            <button
-              className="btn btn-primary"
-              onClick={handleAdvanceBonus}
-            >
-              Next →
+          {/* Advance bonus lead-in to first part */}
+          {isBonusLeadin && (
+            <button className="btn btn-primary" onClick={handleAdvanceLeadin}>
+              Start Parts →
             </button>
           )}
 
+          {/* Advance from per-part reveal to next part / tossup */}
+          {isBonusPartReveal && (
+            <button className="btn btn-primary" onClick={handleAdvanceReveal}>
+              {isLastBonusPart ? 'Next Question →' : 'Next Part →'}
+            </button>
+          )}
         </div>
-
-        {/* Center: Final answer input (bonus) with Accept/Reject */}
-        {gameState.bonusStage === 'final_answer' && (
-          <div className="flex items-center gap-2 flex-1 max-w-lg mx-4">
-            <input
-              type="text"
-              value={finalAnswer}
-              onChange={(e) => setFinalAnswer(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleAcceptBonusAnswer();
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  handleRejectBonusAnswer();
-                }
-              }}
-              placeholder="Enter final answer..."
-              className="input flex-1"
-              autoFocus
-            />
-            <button
-              className="btn bg-green-600 hover:bg-green-700 text-white"
-              onClick={handleAcceptBonusAnswer}
-              disabled={!finalAnswer.trim()}
-              title="Accept answer (+10 pts) - Enter"
-            >
-              ✓ Accept
-            </button>
-            <button
-              className="btn bg-red-600 hover:bg-red-700 text-white"
-              onClick={handleRejectBonusAnswer}
-              title="Reject answer (0 pts) - Escape"
-            >
-              ✕ Reject
-            </button>
-          </div>
-        )}
 
         {/* Right side: Other controls */}
         <div className="flex items-center gap-2">
@@ -184,6 +157,101 @@ export function ModeratorControls() {
           )}
         </div>
       </div>
+
+      {/* Bonus part 3-way decision controls */}
+      {isBonusPart && (
+        <div className="mt-4 border-t pt-4 space-y-3">
+          <input
+            type="text"
+            value={partAnswer}
+            onChange={(e) => setPartAnswer(e.target.value)}
+            placeholder="Team's answer for this part..."
+            className="input w-full"
+            autoFocus
+          />
+
+          {!aiRevealed ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-gray-500 w-full">
+                Team submits own answer (full credit), consults AI for partial credit, or abstains:
+              </span>
+              <button
+                className="btn bg-green-600 hover:bg-green-700 text-white"
+                onClick={() => submitPart('own', true)}
+                disabled={!partAnswer.trim()}
+                title={`Own answer correct (+${fullPoints})`}
+              >
+                ✓ Correct (+{fullPoints})
+              </button>
+              <button
+                className="btn bg-red-600 hover:bg-red-700 text-white"
+                onClick={() => submitPart('own', false)}
+                title="Own answer incorrect (0)"
+              >
+                ✕ Incorrect (0)
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={revealBonusAi}
+                title="Reveal AI responses, then submit for partial credit"
+              >
+                🤖 See AI responses
+              </button>
+              <span className="mx-1 text-gray-300">|</span>
+              <button
+                className="btn bg-blue-600 hover:bg-blue-700 text-white"
+                onClick={() => submitPart('abstain', true)}
+                title={`Abstain — nobody was correct (+${abstainPoints})`}
+              >
+                Abstain ✓ (+{abstainPoints})
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => submitPart('abstain', false)}
+                title="Abstain — but someone was actually correct (0)"
+              >
+                Abstain ✕ (0)
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-gray-500 w-full">
+                AI revealed — team submits a final answer for partial credit, or abstains:
+              </span>
+              <button
+                className="btn bg-green-600 hover:bg-green-700 text-white"
+                onClick={() => submitPart('consult_ai', true)}
+                disabled={!partAnswer.trim()}
+                title={`Correct with AI consult (+${consultPoints})`}
+              >
+                ✓ Correct (+{consultPoints})
+              </button>
+              <button
+                className="btn bg-red-600 hover:bg-red-700 text-white"
+                onClick={() => submitPart('consult_ai', false)}
+                title="Incorrect (0)"
+              >
+                ✕ Incorrect (0)
+              </button>
+              <span className="mx-1 text-gray-300">|</span>
+              <button
+                className="btn bg-blue-600 hover:bg-blue-700 text-white"
+                onClick={() => submitPart('abstain', true)}
+                title={`Abstain — nobody was correct (+${abstainPoints})`}
+              >
+                Abstain ✓ (+{abstainPoints})
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => submitPart('abstain', false)}
+                title="Abstain — but someone was actually correct (0)"
+              >
+                Abstain ✕ (0)
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Dialogs */}
       {showAdjustDialog && (

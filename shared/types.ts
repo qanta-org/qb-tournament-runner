@@ -18,9 +18,22 @@ export interface GameRoom {
 
 export type PlayerType = 'human' | 'ai';
 
+/** AI model weight class, used to scale tossup scoring. */
+export type AIWeightClass = 'lightweight' | 'midweight' | 'heavyweight';
+
+/** How AI-earned points are deflated (applies to both tossup buzzes and bonus consults). */
+export type DeflationMode = 'none' | 'static' | 'weighted';
+
+/** Per-AI buzzing behaviour during tossups. */
+export type AIBuzzMode = 'autonomous' | 'muted' | 'semi';
+
 export interface AIPlayerKwargs {
   tossup_model: string;
   bonus_model: string;
+  /** Model weight class (lightweight/midweight/heavyweight) for tossup score scaling. */
+  weight_class?: AIWeightClass;
+  /** Keyboard key used by a human to buzz on this AI's behalf in semi-autonomous mode. */
+  buzzer_key?: string;
 }
 
 export interface HumanPlayerKwargs {
@@ -66,6 +79,39 @@ export interface GameConfig {
   // Bonus part points value
   bonus_part_points: number;
   multimodal_reveal_lockout_seconds: number;
+
+  // QANTA 2026 rules
+  // Tossup AI scoring multipliers by model weight class.
+  ai_tossup_score_factors: {
+    lightweight: number;
+    midweight: number;
+    heavyweight: number;
+  };
+  // How a correct AI tossup buzz is deflated by the buzzing AI's weight class.
+  // - none: full points; static: subtract `tossup_static_deflation`;
+  // - weighted: multiply by `ai_tossup_score_factors[weight_class]`.
+  tossup_deflation_mode: DeflationMode;
+  // Fixed points subtracted from a correct AI buzz under `static` tossup deflation.
+  tossup_static_deflation: number;
+  // Global token threshold for "autonomous after k tokens" buzz mode (k=1 means no gate).
+  autonomous_default_k: number;
+  // Fraction of bonus part points awarded when the team consults AI before answering.
+  // Deprecated: retained only as a back-compat fallback when `bonus_deflation_mode` is unset.
+  bonus_ai_consult_factor: number;
+  // How a correct AI-consult bonus part is deflated.
+  // - none: full points; static: subtract `bonus_static_deflation`;
+  // - weighted: subtract sum of `bonus_weight_deflation[weight_class]` over the owning team's AI players.
+  bonus_deflation_mode: DeflationMode;
+  // Fixed points subtracted from a correct consult under `static` bonus deflation.
+  bonus_static_deflation: number;
+  // Per-weight-class deflation points subtracted under `weighted` bonus deflation.
+  bonus_weight_deflation: {
+    lightweight: number;
+    midweight: number;
+    heavyweight: number;
+  };
+  // Points awarded for a correct abstention (nobody — human or AI — was right).
+  bonus_abstain_points: number;
 
   // Teams
   team_a: Team;
@@ -128,6 +174,8 @@ export interface BonusPart {
   answer: string;
   answer_refs: string[];
   media?: BonusMedia;
+  // Image revealed alongside the answer at the end of the part (answer_image column)
+  answerMedia?: BonusMedia;
 }
 
 export interface BonusQuestion {
@@ -169,11 +217,15 @@ export type GamePhase =
   | 'answer_review'
   | 'bonus_leadin'
   | 'bonus_part'
+  | 'bonus_part_reveal'
   | 'bonus_human_response'
   | 'bonus_final_answer'
   | 'game_over';
 
-export type BonusStage = 'leadin' | 'question' | 'human_response' | 'final_answer';
+export type BonusStage = 'leadin' | 'question' | 'part_reveal' | 'human_response' | 'final_answer';
+
+/** Per-part decision made by the owning team under QANTA 2026 bonus rules. */
+export type BonusPartDecision = 'pending' | 'own' | 'consult_ai' | 'abstain';
 
 // Question outcome tracking for navigation
 export type QuestionOutcome = 'pending' | 'team_a' | 'team_b' | 'dead' | 'skipped';
@@ -231,14 +283,23 @@ export interface GameState {
   bonusQuestion: BonusQuestion | null;
   bonusResponses: BonusResponse[];
 
+  // Per-part 3-way decision for the owning team (QANTA 2026 bonus rules)
+  bonusPartDecision: BonusPartDecision;
+  // Whether AI responses have been revealed for the current bonus part (consult path)
+  bonusAiRevealed: boolean;
+
   // Current bonus part answer (moderator only)
   currentBonusPartAnswer: string | null;
 
   // Scores
   scores: Record<TeamId, number>;
 
-  // Muted AI players
-  mutedPlayers: string[];
+  // Per-AI buzz mode (player_id -> mode). Absent entries default to 'autonomous'.
+  aiBuzzModes: Record<string, AIBuzzMode>;
+
+  // Per-AI "autonomous after k tokens" threshold (player_id -> k). Absent entries
+  // default to GameConfig.autonomous_default_k. k=1 means no gate.
+  aiAutonomousK: Record<string, number>;
 
   // Game progress
   totalTossups: number;
@@ -389,6 +450,8 @@ export interface BonusPartRecord {
   points: number;
   responses: Record<string, string>;
   finalGuess?: string;
+  decision?: BonusPartDecision;
+  aiRevealed?: boolean;
 }
 
 export interface BonusResponseRecord {
@@ -448,9 +511,20 @@ export interface ClientToServerEvents {
   'player:buzz': (playerId: string) => void;
   'moderator:answer_ruling': (data: { ruling: AnswerRuling; answer: string }) => void;
   'bonus:advance': () => void;
+  // QANTA 2026: advance from the per-part reveal screen to the next part / tossup
+  'bonus:next_part': () => void;
   'bonus:human_response': (responses: Record<string, string>) => void;
   'bonus:final_answer': (answer: string) => void;
-  'player:mute_toggle': (playerId: string) => void;
+  // QANTA 2026: reveal AI responses for the current bonus part (consult path)
+  'bonus:reveal_ai': () => void;
+  // QANTA 2026: submit a per-part result with the chosen decision
+  'bonus:part_result': (data: { decision: BonusPartDecision; correct: boolean; answer: string }) => void;
+  // QANTA 2026: set a per-AI buzz mode (mute / autonomous / semi)
+  'moderator:set_ai_buzz_mode': (data: { playerId: string; mode: AIBuzzMode }) => void;
+  // QANTA 2026: update a single AI's "autonomous after k tokens" threshold live
+  'moderator:set_autonomous_k': (data: { playerId: string; k: number }) => void;
+  // QANTA 2026: human buzzes on behalf of a semi-autonomous AI
+  'moderator:ai_buzz': (playerId: string) => void;
   // Mid-game player management
   'moderator:add_player': (
     data: { teamId: TeamId; player: Player },
@@ -488,6 +562,23 @@ export const DEFAULT_GAME_CONFIG: Partial<GameConfig> = {
   tossup_penalty_value_second_team: 0,
   bonus_part_points: 10,
   multimodal_reveal_lockout_seconds: 5,
+  ai_tossup_score_factors: {
+    lightweight: 1.0,
+    midweight: 0.8,
+    heavyweight: 0.4,
+  },
+  tossup_deflation_mode: 'weighted',
+  tossup_static_deflation: 5,
+  autonomous_default_k: 1,
+  bonus_ai_consult_factor: 0.5,
+  bonus_deflation_mode: 'static',
+  bonus_static_deflation: 5,
+  bonus_weight_deflation: {
+    lightweight: 1,
+    midweight: 2,
+    heavyweight: 3,
+  },
+  bonus_abstain_points: 1,
 };
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
@@ -525,9 +616,12 @@ export function createInitialGameState(): GameState {
     bonusStage: 'leadin',
     bonusQuestion: null,
     bonusResponses: [],
+    bonusPartDecision: 'pending',
+    bonusAiRevealed: false,
     currentBonusPartAnswer: null,
     scores: { team_a: 0, team_b: 0 },
-    mutedPlayers: [],
+    aiBuzzModes: {},
+    aiAutonomousK: {},
     totalTossups: 0,
     totalBonuses: 0,
     tossupResults: [],
@@ -543,7 +637,9 @@ export function filterStateForPlayer(state: GameState): GameState {
     ...state,
     // Players don't see the correct answer until question ends
     currentTossupAnswer: null,
-    currentBonusPartAnswer: null,
+    // Bonus answer is revealed to players during the per-part reveal screen
+    currentBonusPartAnswer:
+      state.phase === 'bonus_part_reveal' ? state.currentBonusPartAnswer : null,
     // Players don't see the full tossup text/tokens; they only see revealed stream state
     fullTossupText: null,
     fullTossupTokens: null,

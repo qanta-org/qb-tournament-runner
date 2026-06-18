@@ -1,0 +1,23 @@
+{
+  "name": "Default",
+  "description": "Standard scoring: AI tossups score full points regardless of weight class; bonus consults use a flat 5-point deflation; autonomous AIs may buzz from the first token.",
+  "config": {
+    "ai_tossup_score_factors": {
+      "lightweight": 1.0,
+      "midweight": 1.0,
+      "heavyweight": 1.0
+    },
+    "tossup_deflation_mode": "none",
+    "tossup_static_deflation": 5,
+    "autonomous_default_k": 1,
+    "bonus_ai_consult_factor": 0.5,
+    "bonus_deflation_mode": "static",
+    "bonus_static_deflation": 5,
+    "bonus_weight_deflation": {
+      "lightweight": 1,
+      "midweight": 2,
+      "heavyweight": 3
+    },
+    "bonus_abstain_points": 1
+  }
+}

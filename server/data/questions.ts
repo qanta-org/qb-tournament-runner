@@ -134,6 +134,32 @@ function extractBonusMedia(
   return { cleanText, media: undefined };
 }
 
+/**
+ * Resolve a bonus "answer_image" column value (a packet-relative path such as
+ * `img/b6_p1_a.png`) into an asset URL. Returns undefined for blank values.
+ */
+function resolveBonusAnswerImage(
+  questionFile: string,
+  rawValue: unknown
+): BonusMedia | undefined {
+  const relPath = String(rawValue ?? '').trim();
+  if (!relPath) return undefined;
+
+  const packetDir = path.dirname(questionFile);
+  const assetPath = path.isAbsolute(relPath)
+    ? relPath
+    : path.join(packetDir, relPath);
+
+  if (!fs.existsSync(assetPath)) {
+    console.warn(`Bonus answer image not found: ${assetPath}`);
+    return undefined;
+  }
+
+  return {
+    imageUrl: `/api/datasets/asset?file=${encodeURIComponent(assetPath)}`,
+  };
+}
+
 function getPacketAssetPath(questionFile: string, token: TossupMultimodalToken): string {
   if (token.tokenType === 'delay') {
     return '';
@@ -222,13 +248,15 @@ function processBonusDict(item: Record<string, unknown>, questionFile: string): 
 
   // Check if we're loading the new format or old format
   if (item.parts && Array.isArray(item.parts)) {
-    const rawParts = item.parts as BonusPart[];
+    const rawParts = item.parts as Array<BonusPart & { answer_image?: string }>;
     const parts: BonusPart[] = rawParts.map((part) => {
       const { cleanText, media } = extractBonusMedia(part.text, questionFile);
       return {
         ...part,
         text: cleanText,
         media: media ?? part.media,
+        answerMedia:
+          part.answerMedia ?? resolveBonusAnswerImage(questionFile, part.answer_image),
       };
     });
 
@@ -245,6 +273,7 @@ function processBonusDict(item: Record<string, unknown>, questionFile: string): 
       const partKey = `part${i + 1}`;
       const answerKey = `answer${i + 1}`;
       const answerlineKey = `answerline${i + 1}`;
+      const answerImageKey = `answer_image${i + 1}`;
 
       if (item[partKey] && item[answerKey]) {
         const rawPartText = String(item[partKey]);
@@ -255,6 +284,7 @@ function processBonusDict(item: Record<string, unknown>, questionFile: string): 
           answer: String(item[answerlineKey] || item[answerKey]),
           answer_refs: parseAnswerRefs(String(item[answerKey])),
           media,
+          answerMedia: resolveBonusAnswerImage(questionFile, item[answerImageKey]),
         });
       }
     }

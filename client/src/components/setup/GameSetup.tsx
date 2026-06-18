@@ -2,17 +2,27 @@ import { useState, useEffect } from 'react';
 import { useGame } from '../../context/GameContext';
 import { TeamBuilder } from './TeamBuilder';
 import { FileUploader } from './FileUploader';
-import type { GameConfig, Team } from '../../../../shared/types';
+import { fetchRulePresets, fetchRulePreset, type RulePresetSummary } from '../../api/config';
+import type { DeflationMode, GameConfig, Team } from '../../../../shared/types';
 import {
+  DEFAULT_AI_TOSSUP_SCORE_FACTORS,
+  DEFAULT_AUTONOMOUS_K,
+  DEFAULT_BONUS_ABSTAIN_POINTS,
+  DEFAULT_BONUS_AI_CONSULT_FACTOR,
+  DEFAULT_BONUS_DEFLATION_MODE,
   DEFAULT_BONUS_PART_POINTS,
+  DEFAULT_BONUS_STATIC_DEFLATION,
+  DEFAULT_BONUS_WEIGHT_DEFLATION,
   DEFAULT_ENABLE_POWER_POINTS,
   DEFAULT_MULTIMODAL_REVEAL_LOCKOUT_SECONDS,
   DEFAULT_POWER_POINTS_VALUE,
   DEFAULT_STREAMING_SPEED_WPM,
   DEFAULT_SUPPRESS_EARLY_AI_SECOND_BUZZES,
+  DEFAULT_TOSSUP_DEFLATION_MODE,
   DEFAULT_TOSSUP_PENALTY_VALUE,
   DEFAULT_TOSSUP_PENALTY_VALUE_SECOND_TEAM,
   DEFAULT_TOSSUP_POINTS_VALUE,
+  DEFAULT_TOSSUP_STATIC_DEFLATION,
   STREAMING_SPEED_MAX_WPM,
   STREAMING_SPEED_MIN_WPM,
 } from '../../constants/gameDefaults';
@@ -52,7 +62,57 @@ export function GameSetup() {
     tossupPenaltyValue: DEFAULT_TOSSUP_PENALTY_VALUE,
     bonusPartPoints: DEFAULT_BONUS_PART_POINTS,
     multimodalRevealLockoutSeconds: DEFAULT_MULTIMODAL_REVEAL_LOCKOUT_SECONDS,
+    aiTossupScoreFactors: DEFAULT_AI_TOSSUP_SCORE_FACTORS as {
+      lightweight: number;
+      midweight: number;
+      heavyweight: number;
+    },
+    tossupDeflationMode: DEFAULT_TOSSUP_DEFLATION_MODE as DeflationMode,
+    tossupStaticDeflation: DEFAULT_TOSSUP_STATIC_DEFLATION,
+    autonomousK: DEFAULT_AUTONOMOUS_K,
+    bonusAiConsultFactor: DEFAULT_BONUS_AI_CONSULT_FACTOR,
+    bonusDeflationMode: DEFAULT_BONUS_DEFLATION_MODE as DeflationMode,
+    bonusStaticDeflation: DEFAULT_BONUS_STATIC_DEFLATION,
+    bonusWeightDeflation: DEFAULT_BONUS_WEIGHT_DEFLATION as {
+      lightweight: number;
+      midweight: number;
+      heavyweight: number;
+    },
+    bonusAbstainPoints: DEFAULT_BONUS_ABSTAIN_POINTS,
   });
+
+  const [rulePresets, setRulePresets] = useState<RulePresetSummary[]>([]);
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('');
+
+  useEffect(() => {
+    fetchRulePresets()
+      .then(setRulePresets)
+      .catch((err) => console.error('Failed to load rule presets:', err));
+  }, []);
+
+  const applyPreset = async (id: string) => {
+    setSelectedPresetId(id);
+    if (!id) return;
+    try {
+      const preset = await fetchRulePreset(id);
+      const c = preset.config;
+      setSettings((prev) => ({
+        ...prev,
+        aiTossupScoreFactors: c.ai_tossup_score_factors ?? prev.aiTossupScoreFactors,
+        tossupDeflationMode: c.tossup_deflation_mode ?? prev.tossupDeflationMode,
+        tossupStaticDeflation: c.tossup_static_deflation ?? prev.tossupStaticDeflation,
+        autonomousK: c.autonomous_default_k ?? prev.autonomousK,
+        bonusAiConsultFactor: c.bonus_ai_consult_factor ?? prev.bonusAiConsultFactor,
+        bonusDeflationMode: c.bonus_deflation_mode ?? prev.bonusDeflationMode,
+        bonusStaticDeflation: c.bonus_static_deflation ?? prev.bonusStaticDeflation,
+        bonusWeightDeflation: c.bonus_weight_deflation ?? prev.bonusWeightDeflation,
+        bonusAbstainPoints: c.bonus_abstain_points ?? prev.bonusAbstainPoints,
+        bonusPartPoints: c.bonus_part_points ?? prev.bonusPartPoints,
+      }));
+    } catch (err) {
+      console.error('Failed to apply rule preset:', err);
+    }
+  };
 
   // When files change, try to load available models
   useEffect(() => {
@@ -125,6 +185,15 @@ export function GameSetup() {
       tossup_penalty_value_second_team: DEFAULT_TOSSUP_PENALTY_VALUE_SECOND_TEAM,
       bonus_part_points: settings.bonusPartPoints,
       multimodal_reveal_lockout_seconds: settings.multimodalRevealLockoutSeconds,
+      ai_tossup_score_factors: settings.aiTossupScoreFactors,
+      tossup_deflation_mode: settings.tossupDeflationMode,
+      tossup_static_deflation: settings.tossupStaticDeflation,
+      autonomous_default_k: settings.autonomousK,
+      bonus_ai_consult_factor: settings.bonusAiConsultFactor,
+      bonus_deflation_mode: settings.bonusDeflationMode,
+      bonus_static_deflation: settings.bonusStaticDeflation,
+      bonus_weight_deflation: settings.bonusWeightDeflation,
+      bonus_abstain_points: settings.bonusAbstainPoints,
     };
 
     startGame(config);
@@ -279,6 +348,30 @@ export function GameSetup() {
             <div>
               <h2 className="text-xl font-bold text-gray-800 mb-6">Game Settings</h2>
               <div className="space-y-6">
+                {/* Rule preset selector */}
+                {rulePresets.length > 0 && (
+                  <div>
+                    <label className="label">Rule Preset</label>
+                    <select
+                      value={selectedPresetId}
+                      onChange={(e) => applyPreset(e.target.value)}
+                      className="input w-full"
+                    >
+                      <option value="">Custom (no preset)</option>
+                      {rulePresets.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedPresetId && (
+                      <p className="text-sm text-gray-500 mt-1">
+                        {rulePresets.find((p) => p.id === selectedPresetId)?.description}
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {/* Stream mode */}
                 <div className="flex items-center justify-between">
                   <div>
@@ -395,6 +488,151 @@ export function GameSetup() {
                       }
                       className="input"
                     />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6">
+                <h3 className="text-base font-semibold mb-3">AI Score Deflation</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="border rounded-lg p-4 space-y-3">
+                    <div>
+                      <label className="label">Tossup deflation</label>
+                      <select
+                        value={settings.tossupDeflationMode}
+                        onChange={(e) =>
+                          setSettings({
+                            ...settings,
+                            tossupDeflationMode: e.target.value as DeflationMode,
+                          })
+                        }
+                        className="input"
+                      >
+                        <option value="none">None (full points)</option>
+                        <option value="static">Static (fixed deflation)</option>
+                        <option value="weighted">Weighted (by model size)</option>
+                      </select>
+                    </div>
+                    {settings.tossupDeflationMode === 'static' && (
+                      <div>
+                        <label className="label">Static deflation (points)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={settings.tossupStaticDeflation}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              tossupStaticDeflation: Math.max(
+                                0,
+                                parseInt(e.target.value) || 0
+                              ),
+                            })
+                          }
+                          className="input"
+                        />
+                      </div>
+                    )}
+                    {settings.tossupDeflationMode === 'weighted' && (
+                      <div className="grid grid-cols-3 gap-2">
+                        {(['lightweight', 'midweight', 'heavyweight'] as const).map((wc) => (
+                          <div key={wc}>
+                            <label className="label">
+                              {wc === 'lightweight' ? 'LW' : wc === 'midweight' ? 'MW' : 'HW'} ×
+                            </label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              min={0}
+                              value={settings.aiTossupScoreFactors[wc]}
+                              onChange={(e) =>
+                                setSettings({
+                                  ...settings,
+                                  aiTossupScoreFactors: {
+                                    ...settings.aiTossupScoreFactors,
+                                    [wc]: parseFloat(e.target.value) || 0,
+                                  },
+                                })
+                              }
+                              className="input"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-xs text-gray-500">
+                      Weighted multiplies a correct AI buzz by its model-size factor.
+                    </p>
+                  </div>
+
+                  <div className="border rounded-lg p-4 space-y-3">
+                    <div>
+                      <label className="label">Bonus consult deflation</label>
+                      <select
+                        value={settings.bonusDeflationMode}
+                        onChange={(e) =>
+                          setSettings({
+                            ...settings,
+                            bonusDeflationMode: e.target.value as DeflationMode,
+                          })
+                        }
+                        className="input"
+                      >
+                        <option value="none">None (full points)</option>
+                        <option value="static">Static (fixed deflation)</option>
+                        <option value="weighted">Weighted (by model size)</option>
+                      </select>
+                    </div>
+                    {settings.bonusDeflationMode === 'static' && (
+                      <div>
+                        <label className="label">Static deflation (points)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={settings.bonusStaticDeflation}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              bonusStaticDeflation: Math.max(
+                                0,
+                                parseInt(e.target.value) || 0
+                              ),
+                            })
+                          }
+                          className="input"
+                        />
+                      </div>
+                    )}
+                    {settings.bonusDeflationMode === 'weighted' && (
+                      <div className="grid grid-cols-3 gap-2">
+                        {(['lightweight', 'midweight', 'heavyweight'] as const).map((wc) => (
+                          <div key={wc}>
+                            <label className="label">
+                              {wc === 'lightweight' ? 'LW' : wc === 'midweight' ? 'MW' : 'HW'} −
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={settings.bonusWeightDeflation[wc]}
+                              onChange={(e) =>
+                                setSettings({
+                                  ...settings,
+                                  bonusWeightDeflation: {
+                                    ...settings.bonusWeightDeflation,
+                                    [wc]: Math.max(0, parseInt(e.target.value) || 0),
+                                  },
+                                })
+                              }
+                              className="input"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-xs text-gray-500">
+                      Weighted subtracts the sum of model-size deflation points for the team's AI
+                      teammates from the bonus part value.
+                    </p>
                   </div>
                 </div>
               </div>

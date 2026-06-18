@@ -18,6 +18,8 @@ export function BonusDisplay() {
   const totalParts = bonus.parts.length;
   const currentPart = gameState.currentBonusPart;
   const showPart = gameState.bonusStage !== 'leadin';
+  const isReveal = gameState.phase === 'bonus_part_reveal';
+  const answerImageUrl = bonus.parts[currentPart]?.answerMedia?.imageUrl;
 
   return (
     <div className="space-y-4">
@@ -133,8 +135,24 @@ export function BonusDisplay() {
           </>
         )}
 
-        {/* AI Responses (during final_answer stage) */}
-        {gameState.bonusStage === 'final_answer' && gameState.bonusResponses.length > 0 && (
+        {/* Answer image (revealed alongside the answer at the end of the part) */}
+        {isReveal && answerImageUrl && (
+          <div className="flex flex-col items-center border-t pt-4 mt-4">
+            <p className="text-xs text-gray-500 mb-2 uppercase tracking-wide w-full">
+              Answer Image
+            </p>
+            <div className="w-full sm:w-2/3 border rounded-md overflow-hidden bg-black/5">
+              <img
+                src={answerImageUrl}
+                alt={`Bonus part ${currentPart + 1} answer image`}
+                className="w-full max-h-72 object-contain bg-black/10"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* AI Responses (only after the team consults / reveals the AI) */}
+        {gameState.bonusAiRevealed && gameState.bonusResponses.length > 0 && (
           <div className="border-t pt-4 mt-4">
             <h4 className="font-semibold text-gray-700 mb-3">AI Responses:</h4>
             <div className="space-y-2">
@@ -196,10 +214,15 @@ export function BonusDisplay() {
 
         {/* Stage indicator */}
         <div className="text-center text-sm text-gray-500">
-          {gameState.bonusStage === 'leadin' && 'Press → to show the question'}
-          {gameState.bonusStage === 'question' && 'Press → to collect human responses'}
-          {gameState.bonusStage === 'human_response' && 'Collecting responses...'}
-          {gameState.bonusStage === 'final_answer' && 'Enter final answer below'}
+          {gameState.bonusStage === 'leadin' && 'Press → to show the first part'}
+          {gameState.bonusStage === 'question' && !gameState.bonusAiRevealed &&
+            'Choose: submit own answer (full), see AI responses (partial), or abstain'}
+          {gameState.bonusStage === 'question' && gameState.bonusAiRevealed &&
+            'AI revealed — submit final answer for partial credit, or abstain'}
+          {gameState.bonusStage === 'part_reveal' &&
+            (isReveal && currentPart >= totalParts - 1
+              ? 'Answer revealed — press → for the next question'
+              : 'Answer revealed — press → for the next part')}
         </div>
       </div>
     </div>

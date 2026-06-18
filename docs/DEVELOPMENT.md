@@ -32,7 +32,7 @@ The directory tree in `README.md` gives a concise snapshot of these folders.
 - **`App.tsx`**: Main application component that routes between moderator and player/tournament views based on role.
 - **`socket.ts`**: Socket.io client initialization and connection management (single shared client).
 - **Dev-only presets**:
-  - `dev/DevAutostart.tsx` and `dev/presets/trailsCon.ts` implement a development-only **Trails-Con single-game preset** that auto-creates a room and starts a game when `VITE_AUTOSTART_PRESET=trails-con` (used by `npm run dev:trailscon`).
+  - `dev/DevAutostart.tsx` and `dev/presets/trailsCon.ts` implement development-only **single-game presets** that auto-create a room and start a game when `VITE_AUTOSTART_PRESET=<id>` (or `?preset=<id>`). Supported ids: `trails-con` (`npm run dev:trailscon`) and `qanta26` (`npm run dev:qanta26`).
 
 ### State Management
 
@@ -71,7 +71,7 @@ The directory tree in `README.md` gives a concise snapshot of these folders.
 
 - **Scoreboard** (`components/scoreboard/`)
   - `scoreboard/Scoreboard.tsx`: Main scoreboard container.
-  - `scoreboard/TeamPanel.tsx`: Panel per team with players, scores, mute status, and “Manage Players.”
+  - `scoreboard/TeamPanel.tsx`: Panel per team with players, scores, per-AI buzz-mode selector (Auto/Semi/Mute), weight-class badges, and “Manage Players.”
 
 - **Controls & Dialogs**
   - `controls/ModeratorControls.tsx`: Buttons and shortcuts for moderator actions.
@@ -185,7 +185,8 @@ The game engine maintains a single authoritative `GameState`. Key patterns:
 
 - **Phase-Specific Fields**
   - Tossup-only fields: `currentTossupId`, `currentTossupAnswer`, `fullTossupText`, `fullTossupTokens`, `tokenIndex`, `totalTokens`, `wordIndex`, `revealedText`, `activeMultimodalToken`, `revealLockoutUntilMs`, `teamBuzzed`, `buzzingPlayer`, `currentGuesses`, `tossupPointsValue`.
-  - Bonus-only fields: `currentBonusId`, `bonusOwner`, `bonusQuestion`, `currentBonusPart`, `bonusStage`, `bonusResponses`, `currentBonusPartAnswer`.
+  - Bonus-only fields: `currentBonusId`, `bonusOwner`, `bonusQuestion`, `currentBonusPart`, `bonusStage`, `bonusResponses`, `currentBonusPartAnswer`, `bonusPartDecision` (per-part `own`/`consult_ai`/`abstain` choice), `bonusAiRevealed` (whether AI responses have been revealed for the consult path).
+  - AI buzzing: `aiBuzzModes` maps each AI `player_id` to its tossup buzz mode (`autonomous` / `muted` / `semi`); absent entries default to `autonomous`.
 
 - **Filtering for Players**
   - `filterStateForPlayer()` removes moderator-only information before sending state to player clients:

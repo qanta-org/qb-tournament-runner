@@ -9,6 +9,8 @@ import type {
   CreateTournamentParams,
 } from '../../../../shared/types';
 import { DEFAULT_GAME_CONFIG } from '../../../../shared/types';
+import { fetchRulePresets, fetchRulePreset, type RulePresetSummary } from '../../api/config';
+import type { DeflationMode, GameConfig } from '../../../../shared/types';
 import {
   buildScheduleRounds,
   computeFormatSummary,
@@ -93,6 +95,9 @@ export function TournamentWizard() {
   const [prelimStrategy, setPrelimStrategy] = useState<PrelimStrategy>('round_robin');
   const [playoffStrategy, setPlayoffStrategy] = useState<PlayoffStrategy>('none');
   const [playoffBracketSize, setPlayoffBracketSize] = useState<2 | 4 | 8>(4);
+  const [rulePresets, setRulePresets] = useState<RulePresetSummary[]>([]);
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('');
+  const [rulePresetOverrides, setRulePresetOverrides] = useState<Partial<GameConfig>>({});
 
   // Grouped RR state
   const [numGroups, setNumGroups] = useState(2);
@@ -120,6 +125,43 @@ export function TournamentWizard() {
       setGroupAssignments(snakeDraftGroups(teamIds, Math.min(numGroups, Math.floor(n / 2))));
     }
   }, [prelimStrategy, numGroups, enabledTeamIds.size]);
+
+  useEffect(() => {
+    fetchRulePresets()
+      .then(setRulePresets)
+      .catch((err) => console.error('Failed to load rule presets:', err));
+  }, []);
+
+  const applyRulePreset = async (id: string) => {
+    setSelectedPresetId(id);
+    if (!id) {
+      setRulePresetOverrides({});
+      return;
+    }
+    try {
+      const preset = await fetchRulePreset(id);
+      setRulePresetOverrides(preset.config ?? {});
+    } catch (err) {
+      console.error('Failed to apply rule preset:', err);
+    }
+  };
+
+  // ---- AI deflation settings (stored on rulePresetOverrides) ----
+  const setOverride = (patch: Partial<GameConfig>) =>
+    setRulePresetOverrides((prev) => ({ ...prev, ...patch }));
+
+  const tossupDeflationMode =
+    rulePresetOverrides.tossup_deflation_mode ?? DEFAULT_GAME_CONFIG.tossup_deflation_mode!;
+  const tossupStaticDeflation =
+    rulePresetOverrides.tossup_static_deflation ?? DEFAULT_GAME_CONFIG.tossup_static_deflation!;
+  const aiTossupScoreFactors =
+    rulePresetOverrides.ai_tossup_score_factors ?? DEFAULT_GAME_CONFIG.ai_tossup_score_factors!;
+  const bonusDeflationMode =
+    rulePresetOverrides.bonus_deflation_mode ?? DEFAULT_GAME_CONFIG.bonus_deflation_mode!;
+  const bonusStaticDeflation =
+    rulePresetOverrides.bonus_static_deflation ?? DEFAULT_GAME_CONFIG.bonus_static_deflation!;
+  const bonusWeightDeflation =
+    rulePresetOverrides.bonus_weight_deflation ?? DEFAULT_GAME_CONFIG.bonus_weight_deflation!;
 
   // Derive qualifier count (grouped) or pool size (non-grouped)
   const qualifierCount = prelimStrategy === 'grouped_round_robin'
@@ -285,7 +327,7 @@ export function TournamentWizard() {
       teams: finalTeams,
       packets,
       modelDirectory,
-      gameSettings: { ...DEFAULT_GAME_CONFIG },
+      gameSettings: { ...DEFAULT_GAME_CONFIG, ...rulePresetOverrides },
       topNForPlayoffs: playoffStrategy !== 'none' ? effectivePlayoffCount : undefined,
       playoffBracketSize: playoffStrategy !== 'none' ? playoffBracketSize : undefined,
       numGroups: isGrouped ? Object.keys(groupAssignments).length : undefined,
@@ -916,6 +958,168 @@ export function TournamentWizard() {
                 placeholder={(selectedDataset?.name ?? 'My') + ' Tournament'}
                 className="border rounded-lg px-3 py-2.5 w-full" />
             </div>
+            {rulePresets.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Rule preset</label>
+                <select
+                  value={selectedPresetId}
+                  onChange={(e) => applyRulePreset(e.target.value)}
+                  className="border rounded-lg px-3 py-2.5 w-full"
+                >
+                  <option value="">Default rules</option>
+                  {rulePresets.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+                {selectedPresetId && (
+                  <p className="text-sm text-gray-500 mt-1">
+                    {rulePresets.find((p) => p.id === selectedPresetId)?.description}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div>
+              <h3 className="text-base font-semibold mb-3">AI Score Deflation</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Tossup deflation */}
+                <div className="border rounded-lg p-4 space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Tossup deflation
+                    </label>
+                    <select
+                      value={tossupDeflationMode}
+                      onChange={(e) =>
+                        setOverride({ tossup_deflation_mode: e.target.value as DeflationMode })
+                      }
+                      className="border rounded-lg px-3 py-2.5 w-full"
+                    >
+                      <option value="none">None (full points)</option>
+                      <option value="static">Static (fixed deflation)</option>
+                      <option value="weighted">Weighted (by model size)</option>
+                    </select>
+                  </div>
+                  {tossupDeflationMode === 'static' && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Static deflation (points)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={tossupStaticDeflation}
+                        onChange={(e) =>
+                          setOverride({
+                            tossup_static_deflation: Math.max(0, parseInt(e.target.value) || 0),
+                          })
+                        }
+                        className="border rounded-lg px-3 py-2.5 w-full"
+                      />
+                    </div>
+                  )}
+                  {tossupDeflationMode === 'weighted' && (
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['lightweight', 'midweight', 'heavyweight'] as const).map((wc) => (
+                        <div key={wc}>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            {wc === 'lightweight' ? 'LW' : wc === 'midweight' ? 'MW' : 'HW'} ×
+                          </label>
+                          <input
+                            type="number"
+                            step="0.1"
+                            min={0}
+                            value={aiTossupScoreFactors[wc]}
+                            onChange={(e) =>
+                              setOverride({
+                                ai_tossup_score_factors: {
+                                  ...aiTossupScoreFactors,
+                                  [wc]: parseFloat(e.target.value) || 0,
+                                },
+                              })
+                            }
+                            className="border rounded-lg px-2 py-2 w-full"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500">
+                    Weighted multiplies a correct AI buzz by its model-size factor.
+                  </p>
+                </div>
+
+                {/* Bonus deflation */}
+                <div className="border rounded-lg p-4 space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Bonus consult deflation
+                    </label>
+                    <select
+                      value={bonusDeflationMode}
+                      onChange={(e) =>
+                        setOverride({ bonus_deflation_mode: e.target.value as DeflationMode })
+                      }
+                      className="border rounded-lg px-3 py-2.5 w-full"
+                    >
+                      <option value="none">None (full points)</option>
+                      <option value="static">Static (fixed deflation)</option>
+                      <option value="weighted">Weighted (by model size)</option>
+                    </select>
+                  </div>
+                  {bonusDeflationMode === 'static' && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Static deflation (points)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={bonusStaticDeflation}
+                        onChange={(e) =>
+                          setOverride({
+                            bonus_static_deflation: Math.max(0, parseInt(e.target.value) || 0),
+                          })
+                        }
+                        className="border rounded-lg px-3 py-2.5 w-full"
+                      />
+                    </div>
+                  )}
+                  {bonusDeflationMode === 'weighted' && (
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['lightweight', 'midweight', 'heavyweight'] as const).map((wc) => (
+                        <div key={wc}>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            {wc === 'lightweight' ? 'LW' : wc === 'midweight' ? 'MW' : 'HW'} −
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={bonusWeightDeflation[wc]}
+                            onChange={(e) =>
+                              setOverride({
+                                bonus_weight_deflation: {
+                                  ...bonusWeightDeflation,
+                                  [wc]: Math.max(0, parseInt(e.target.value) || 0),
+                                },
+                              })
+                            }
+                            className="border rounded-lg px-2 py-2 w-full"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500">
+                    Weighted subtracts the sum of model-size deflation points for the team's AI
+                    teammates from the bonus part value.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <button onClick={goNext}
               className="px-5 py-2.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600 font-medium">
               Next

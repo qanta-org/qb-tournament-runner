@@ -5,7 +5,6 @@ import { GuessTable } from '../guesses/GuessTable';
 import { BonusDisplay } from '../bonus/BonusDisplay';
 import { ModeratorControls } from '../controls/ModeratorControls';
 import { AnswerReviewDialog } from '../dialogs/AnswerReviewDialog';
-import { ResponseCollectionDialog } from '../dialogs/ResponseCollectionDialog';
 import { QuestionNavSidebar } from '../navigation/QuestionNavSidebar';
 
 export function GameLayout() {
@@ -18,6 +17,7 @@ export function GameLayout() {
   const isBonusPhase = [
     'bonus_leadin',
     'bonus_part',
+    'bonus_part_reveal',
     'bonus_human_response',
     'bonus_final_answer',
   ].includes(gameState.phase);
@@ -110,9 +110,6 @@ export function GameLayout() {
 
         {/* Answer Review Dialog */}
         {gameState.phase === 'answer_review' && <AnswerReviewDialog />}
-
-        {/* Human Response Collection Dialog */}
-        {gameState.phase === 'bonus_human_response' && <ResponseCollectionDialog />}
 
         {/* Status Bar */}
         <footer className="text-center text-sm text-gray-500">

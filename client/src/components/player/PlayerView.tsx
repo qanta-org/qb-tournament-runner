@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useGame } from '../../context/GameContext';
-import type { Team, TeamId, Player, TossupResponse } from '../../../../shared/types';
+import type { Team, TeamId, Player, TossupResponse, AIBuzzMode } from '../../../../shared/types';
 import { BONUS_AI_EXPLANATION_MAX_WORDS } from '../../constants/playerView';
 import { truncateWords } from '../../utils/text';
+import { maxAiTossupPoints } from '../../utils/aiScoring';
 import {
   MS_PER_SECOND,
   REVEAL_LOCKOUT_SECONDS_DECIMALS,
@@ -23,17 +24,17 @@ export function PlayerView() {
 
   if (!gameConfig) {
     return (
-      <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-8">
+      <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col items-center justify-center p-8">
         <div className="text-center">
           <div className="text-6xl mb-6">⏳</div>
           <h1 className="text-3xl font-bold mb-2">Waiting for Game</h1>
-          <p className="text-gray-400 mb-4">
-            Room Code: <span className="font-mono text-2xl text-blue-400">{roomCode}</span>
+          <p className="text-gray-600 mb-4">
+            Room Code: <span className="font-mono text-2xl text-blue-600">{roomCode}</span>
           </p>
           <p className="text-gray-500">The moderator is setting up the game...</p>
           <button
             onClick={leaveRoom}
-            className="mt-8 px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+            className="mt-8 px-6 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg transition-colors"
           >
             Leave Room
           </button>
@@ -56,6 +57,7 @@ export function PlayerView() {
   const isBonusPhase = [
     'bonus_leadin',
     'bonus_part',
+    'bonus_part_reveal',
     'bonus_human_response',
     'bonus_final_answer',
   ].includes(gameState.phase);
@@ -90,11 +92,11 @@ export function PlayerView() {
   const showBonusResponsesForTeam = (teamId: TeamId) =>
     isBonusPhase &&
     bonusOwner === teamId &&
-    gameState.bonusStage === 'final_answer' &&
+    gameState.bonusAiRevealed &&
     gameState.bonusResponses.length > 0;
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
+    <div className="pv-screen">
       {/* Full-width 3-column grid — proportions fixed so center never shifts */}
       <div
         className="w-full max-w-screen-2xl mx-auto min-h-screen grid gap-3 p-3"
@@ -107,7 +109,7 @@ export function PlayerView() {
             teamId="team_a"
             score={gameState.scores.team_a}
             buzzingPlayer={gameState.buzzingPlayer}
-            mutedPlayers={gameState.mutedPlayers}
+            aiBuzzModes={gameState.aiBuzzModes}
             teamColor={getTeamColor('team_a')}
           />
 
@@ -133,7 +135,7 @@ export function PlayerView() {
               <div className="text-xs text-gray-500 uppercase tracking-widest">
                 {isBonusPhase ? 'Bonus Question' : 'Tossup Question'}
               </div>
-              <div className="text-base text-gray-300 font-medium">
+              <div className="text-base text-gray-700 font-medium">
                 {isBonusPhase
                   ? `Bonus ${gameState.currentBonusNum} of ${gameState.totalBonuses}`
                   : `Tossup ${gameState.currentTossupNum} of ${gameState.totalTossups}`}
@@ -141,7 +143,7 @@ export function PlayerView() {
             </div>
             <button
               onClick={leaveRoom}
-              className="text-gray-600 hover:text-gray-300 text-xs transition-colors"
+              className="text-gray-400 hover:text-gray-700 text-xs transition-colors"
             >
               Leave
             </button>
@@ -149,16 +151,16 @@ export function PlayerView() {
 
           {/* Tossup question */}
           {isTossupPhase && (
-            <div className="bg-gray-800 rounded-2xl p-6 flex-1">
+            <div className="pv-question-card">
               {gameConfig.enable_power_points && gameState.tossupPointsValue > gameConfig.default_points_value && (
                 <div className="text-center mb-4">
-                  <span className="bg-yellow-500/20 text-yellow-400 px-3 py-1 rounded-full text-sm">
+                  <span className="bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full text-sm">
                     ⚡ POWER ({gameState.tossupPointsValue} pts)
                   </span>
                 </div>
               )}
 
-              <div className="text-xl leading-relaxed text-gray-100 flex flex-wrap items-center gap-x-2 gap-y-2">
+              <div className="text-xl leading-relaxed text-gray-900 flex flex-wrap items-center gap-x-2 gap-y-2">
                 {renderableRevealedTokens.length > 0 ? (
                   renderableRevealedTokens.map((token, index) => {
                     if (token.kind === 'text') {
@@ -169,7 +171,7 @@ export function PlayerView() {
                         <span
                           key={index}
                           title={token.hash || ''}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border bg-emerald-900/30 text-emerald-300 border-emerald-600/40"
+                          className="pv-token-audio"
                         >
                           <button
                             type="button"
@@ -187,14 +189,14 @@ export function PlayerView() {
                       <span
                         key={index}
                         title={token.hash || ''}
-                        className="px-2 py-0.5 rounded text-xs font-semibold border bg-indigo-900/30 text-indigo-300 border-indigo-600/40"
+                        className="pv-token-img"
                       >
                         [IMG]
                       </span>
                     );
                   })
                 ) : (
-                  <span className="text-gray-500 italic">Waiting for question...</span>
+                  <span className="text-gray-400 italic">Waiting for question...</span>
                 )}
                 {gameState.phase === 'tossup_streaming' && (
                   <span className="inline-block w-2 h-5 ml-1 bg-blue-500 animate-pulse" />
@@ -202,13 +204,13 @@ export function PlayerView() {
               </div>
 
               {lockoutRemainingMs > 0 && (
-                <div className="mt-3 text-amber-300 text-sm">
+                <div className="mt-3 text-amber-600 text-sm">
                   Next token unlocks in {(lockoutRemainingMs / MS_PER_SECOND).toFixed(REVEAL_LOCKOUT_SECONDS_DECIMALS)}s
                 </div>
               )}
 
               <div className="mt-4 flex items-center gap-2">
-                <div className="flex-1 h-1 bg-gray-700 rounded-full overflow-hidden">
+                <div className="flex-1 h-1 bg-gray-200 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-blue-500 transition-all duration-200"
                     style={{
@@ -222,10 +224,10 @@ export function PlayerView() {
               </div>
 
               {gameState.currentTossupAnswer && (
-                <div className="mt-4 pt-4 border-t border-gray-700">
-                  <div className="text-sm text-green-400 mb-1">Answer:</div>
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <div className="text-sm text-green-600 mb-1">Answer:</div>
                   <div
-                    className="text-lg text-green-300 font-semibold"
+                    className="text-lg text-green-700 font-semibold"
                     dangerouslySetInnerHTML={{ __html: gameState.currentTossupAnswer }}
                   />
                 </div>
@@ -233,10 +235,10 @@ export function PlayerView() {
 
               {lastRevealedImageToken && (
                 <div className="mt-6 flex flex-col items-center">
-                  <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2 w-full">
+                  <div className="pv-section-label text-gray-500 mb-2 w-full">
                     Image
                   </div>
-                  <div className="w-full rounded-lg border border-gray-700 bg-gray-900 flex items-center justify-center overflow-hidden min-h-[30vh] max-h-[55vh]">
+                  <div className="pv-image-frame">
                     <img
                       src={lastRevealedImageToken.assetUrl}
                       alt={lastRevealedImageToken.hash || 'multimodal image'}
@@ -259,9 +261,9 @@ export function PlayerView() {
             >
               <div className="text-center">
                 <div className="text-lg mb-1" style={{ color: buzzTeamColor }}>🔔 BUZZ!</div>
-                <div className="text-xl font-bold text-white mb-1">{buzzingPlayer.name}</div>
+                <div className="text-xl font-bold text-gray-900 mb-1">{buzzingPlayer.name}</div>
                 {gameState.buzzingPlayerGuess && (
-                  <div className="text-lg text-gray-300">"{gameState.buzzingPlayerGuess}"</div>
+                  <div className="text-lg text-gray-700">"{gameState.buzzingPlayerGuess}"</div>
                 )}
                 <div className="text-sm text-gray-500 mt-2">Awaiting moderator ruling...</div>
               </div>
@@ -273,9 +275,9 @@ export function PlayerView() {
 
           {/* Game over */}
           {gameState.phase === 'game_over' && (
-            <div className="text-center py-12 bg-gray-800 rounded-2xl">
+            <div className="pv-gameover-card">
               <h2 className="text-4xl font-bold mb-4">🎉 Game Over!</h2>
-              <div className="text-2xl text-gray-400">
+              <div className="text-2xl text-gray-600">
                 Final Score: {gameState.scores.team_a} – {gameState.scores.team_b}
               </div>
               <div className="mt-4 text-xl">
@@ -284,7 +286,7 @@ export function PlayerView() {
                 ) : gameState.scores.team_b > gameState.scores.team_a ? (
                   <span style={{ color: getTeamColor('team_b') }}>{gameConfig.team_b.name} Wins!</span>
                 ) : (
-                  <span className="text-gray-400">It's a Tie!</span>
+                  <span className="text-gray-600">It's a Tie!</span>
                 )}
               </div>
             </div>
@@ -298,7 +300,7 @@ export function PlayerView() {
             teamId="team_b"
             score={gameState.scores.team_b}
             buzzingPlayer={gameState.buzzingPlayer}
-            mutedPlayers={gameState.mutedPlayers}
+            aiBuzzModes={gameState.aiBuzzModes}
             teamColor={getTeamColor('team_b')}
           />
 
@@ -329,41 +331,59 @@ function PlayerTeamPanel({
   teamId,
   score,
   buzzingPlayer,
-  mutedPlayers,
+  aiBuzzModes,
   teamColor,
 }: {
   team: Team;
   teamId: TeamId;
   score: number;
   buzzingPlayer: string | null;
-  mutedPlayers: string[];
+  aiBuzzModes: Record<string, AIBuzzMode>;
   teamColor: string;
 }) {
+  const { gameConfig } = useGame();
   const humanPlayers = team.players.filter((p) => p.type === 'human');
   const aiPlayers = team.players.filter((p) => p.type === 'ai');
 
   const renderPlayer = (player: Player) => {
-    const isMuted = mutedPlayers.includes(player.player_id);
+    const mode = player.type === 'ai' ? aiBuzzModes[player.player_id] ?? 'autonomous' : 'autonomous';
+    const isMuted = player.type === 'ai' && mode === 'muted';
+    const isSemi = player.type === 'ai' && mode === 'semi';
     const isBuzzing = buzzingPlayer === player.player_id;
     const buzzerKey =
-      player.type === 'human' ? (player.extra_kwargs as { buzzer_key: string }).buzzer_key : null;
+      player.type === 'human'
+        ? (player.extra_kwargs as { buzzer_key: string }).buzzer_key
+        : isSemi
+          ? (player.extra_kwargs as { buzzer_key?: string }).buzzer_key ?? null
+          : null;
+    const maxPoints =
+      player.type === 'ai' && gameConfig ? maxAiTossupPoints(gameConfig, player) : null;
 
     return (
       <div
         key={player.player_id}
-        className={`flex items-center gap-2 py-0.5 ${isBuzzing ? 'animate-pulse bg-yellow-500/20 rounded px-1 -mx-1' : ''}`}
+        className={`flex items-center gap-2 py-0.5 ${isBuzzing ? 'animate-pulse bg-yellow-100 rounded px-1 -mx-1' : ''}`}
       >
         <span className="text-sm">{player.type === 'human' ? '👤' : '🤖'}</span>
         {buzzerKey && (
-          <span className="px-1 py-0.5 bg-gray-700 rounded text-xs font-mono text-gray-300">
+          <span className="pv-key-chip">
             {buzzerKey}
           </span>
         )}
-        <span className={`text-base leading-snug ${isMuted ? 'line-through text-gray-500' : 'text-gray-200'}`}>
+        <span className={`text-base leading-snug ${isMuted ? 'line-through text-gray-400' : 'text-gray-800'}`}>
           {player.name}
         </span>
-        {isMuted && <span className="text-gray-500 text-xs ml-auto">🔇</span>}
-        {isBuzzing && <span className="text-yellow-400 text-xs ml-auto">🚨</span>}
+        {maxPoints !== null && (
+          <span
+            className="pv-points-badge"
+            title="Maximum tossup points this model can score"
+          >
+            {maxPoints} pts
+          </span>
+        )}
+        {isMuted && <span className="text-gray-400 text-xs ml-auto">🔇</span>}
+        {isSemi && <span className="text-blue-500 text-xs ml-auto" title="Semi-autonomous">🎮</span>}
+        {isBuzzing && <span className="text-yellow-500 text-xs ml-auto">🚨</span>}
       </div>
     );
   };
@@ -373,7 +393,7 @@ function PlayerTeamPanel({
 
   return (
     <div
-      className="bg-gray-800 rounded-xl p-4"
+      className="pv-team-panel"
       style={{ borderTop: `4px solid ${teamColor}` }}
     >
       {/* Team name + score */}
@@ -389,7 +409,7 @@ function PlayerTeamPanel({
       <div className="space-y-0.5">
         {humanPlayers.map(renderPlayer)}
         {aiPlayers.length > 0 && humanPlayers.length > 0 && (
-          <div className="border-t border-gray-700 my-1.5" />
+          <div className="border-t border-gray-200 my-1.5" />
         )}
         {aiPlayers.map(renderPlayer)}
       </div>
@@ -418,8 +438,8 @@ function TeamTossupConfidences({
   const teamColor = getTeamColor(teamId);
 
   return (
-    <div className="bg-gray-800 rounded-xl p-3">
-      <div className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: teamColor }}>
+    <div className="pv-side-panel">
+      <div className="pv-section-label mb-2" style={{ color: teamColor }}>
         AI Confidence
       </div>
       <div className="space-y-1.5">
@@ -430,11 +450,11 @@ function TeamTossupConfidences({
           return (
             <div
               key={player.player_id}
-              className="flex items-center justify-between bg-gray-900 rounded px-2 py-1.5"
+              className="pv-conf-row"
             >
-              <span className="text-sm text-gray-300 truncate pr-2">{player.name}</span>
+              <span className="text-sm text-gray-700 truncate pr-2">{player.name}</span>
               <div className="flex items-center gap-1.5 shrink-0">
-                {guess?.buzz && <span className="text-red-400 text-xs">🚨</span>}
+                {guess?.buzz && <span className="text-red-500 text-xs">🚨</span>}
                 <span className="font-bold text-sm" style={{ color: confColor }}>
                   {guess ? `${Math.round(guess.confidence * 100)}%` : '–'}
                 </span>
@@ -464,9 +484,11 @@ function PlayerBonusDisplay() {
   const currentPart = gameState.currentBonusPart;
   const totalParts = bonus.parts.length;
   const showPart = gameState.bonusStage !== 'leadin';
+  const isReveal = gameState.phase === 'bonus_part_reveal';
+  const answerImageUrl = bonus.parts[currentPart]?.answerMedia?.imageUrl;
 
   return (
-    <div className="bg-gray-800 rounded-2xl overflow-hidden">
+    <div className="pv-bonus-card">
       <div className="p-3 text-white text-center" style={{ backgroundColor: teamColor }}>
         <h3 className="text-lg font-bold">BONUS for {teamName}</h3>
       </div>
@@ -474,7 +496,7 @@ function PlayerBonusDisplay() {
       <div className="p-6 space-y-4">
         {/* Lead-in */}
         <div
-          className="text-lg text-gray-200 bg-gray-900/50 p-4 rounded-lg"
+          className="text-lg text-gray-700 pv-inset p-4"
           style={{ borderLeft: `4px solid ${teamColor}` }}
         >
           <div className="text-xs text-gray-500 mb-1 uppercase tracking-wide">Lead-in</div>
@@ -487,7 +509,7 @@ function PlayerBonusDisplay() {
                   const audio = new Audio(bonus.leadinMedia!.audioUrl!);
                   audio.play().catch(() => {});
                 }}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-blue-600/20 text-blue-200 text-sm font-medium border border-blue-500/40"
+                className="pv-audio-btn"
               >
                 <span>▶</span>
                 <span>{bonus.leadinMedia.audioDisplayText || 'Play audio'}</span>
@@ -506,7 +528,7 @@ function PlayerBonusDisplay() {
               Part {currentPart + 1} of {totalParts} ({gameConfig.bonus_part_points} pts)
             </div>
             <div className="space-y-3 mt-2">
-              <div className="text-xl text-gray-100">{bonus.parts[currentPart]?.text}</div>
+              <div className="text-xl text-gray-900">{bonus.parts[currentPart]?.text}</div>
               {bonus.parts[currentPart].media?.audioUrl && (
                 <button
                   type="button"
@@ -514,7 +536,7 @@ function PlayerBonusDisplay() {
                     const audio = new Audio(bonus.parts[currentPart].media!.audioUrl!);
                     audio.play().catch(() => {});
                   }}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-blue-600/20 text-blue-200 text-sm font-medium border border-blue-500/40"
+                  className="pv-audio-btn"
                 >
                   <span>▶</span>
                   <span>{bonus.parts[currentPart].media!.audioDisplayText || 'Play audio'}</span>
@@ -522,10 +544,10 @@ function PlayerBonusDisplay() {
               )}
             </div>
             {gameState.currentBonusPartAnswer && (
-              <div className="mt-4 pt-4 border-t border-gray-700">
-                <div className="text-sm text-green-400 mb-1">Answer:</div>
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <div className="text-sm text-green-600 mb-1">Answer:</div>
                 <div
-                  className="text-lg text-green-300 font-semibold"
+                  className="text-lg text-green-700 font-semibold"
                   dangerouslySetInnerHTML={{ __html: gameState.currentBonusPartAnswer }}
                 />
               </div>
@@ -533,22 +555,37 @@ function PlayerBonusDisplay() {
           </div>
         )}
 
-        {/* Image */}
+        {/* Image — shows the answer image in the same box during the per-part reveal */}
         {(() => {
           const leadinImg = bonus.leadinMedia?.imageUrl;
           const partImg =
             showPart && currentPart < totalParts ? bonus.parts[currentPart].media?.imageUrl : undefined;
-          const displayImg = partImg ?? leadinImg;
+          const showAnswerImg = isReveal && !!answerImageUrl;
+          const displayImg = showAnswerImg ? answerImageUrl : partImg ?? leadinImg;
           if (!displayImg) return null;
           return (
             <div className="flex flex-col items-center">
-              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2 w-full">
-                Image
+              <div
+                className={`pv-section-label mb-2 w-full ${
+                  showAnswerImg ? 'text-green-600' : 'text-gray-500'
+                }`}
+              >
+                {showAnswerImg ? 'Answer Image' : 'Image'}
               </div>
-              <div className="w-full rounded-lg border border-gray-700 bg-gray-900 flex items-center justify-center overflow-hidden min-h-[30vh] max-h-[55vh]">
+              <div
+                className={`pv-image-frame ${
+                  showAnswerImg ? 'border-green-400' : 'border-gray-200'
+                }`}
+              >
                 <img
                   src={displayImg}
-                  alt={partImg ? `Bonus part ${currentPart + 1} image` : 'Bonus lead-in image'}
+                  alt={
+                    showAnswerImg
+                      ? `Bonus part ${currentPart + 1} answer image`
+                      : partImg
+                        ? `Bonus part ${currentPart + 1} image`
+                        : 'Bonus lead-in image'
+                  }
                   className="max-w-full max-h-full object-contain"
                 />
               </div>
@@ -557,8 +594,8 @@ function PlayerBonusDisplay() {
         })()}
 
         {/* Progress bar */}
-        <div className="flex items-center gap-3 pt-4 border-t border-gray-700">
-          <div className="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
+        <div className="flex items-center gap-3 pt-4 border-t border-gray-200">
+          <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
             <div
               className="h-full transition-all duration-300"
               style={{
@@ -599,9 +636,9 @@ function PlayerBonusResponses() {
   };
 
   return (
-    <div className="bg-gray-800 rounded-xl p-3">
+    <div className="pv-side-panel">
       <div
-        className="text-xs font-semibold uppercase tracking-wide mb-3"
+        className="pv-section-label mb-3"
         style={{ color: teamColor }}
       >
         AI Suggestion
@@ -615,7 +652,7 @@ function PlayerBonusResponses() {
             : '';
 
           return (
-            <div key={idx} className="bg-gray-900 p-3 rounded-lg">
+            <div key={idx} className="pv-inset p-3">
               <div className="flex items-center justify-between mb-1.5">
                 <span className="font-semibold text-sm" style={{ color: teamColor }}>
                   {playerName}
@@ -626,14 +663,14 @@ function PlayerBonusResponses() {
               </div>
               <div className="mb-1">
                 <span className="text-xs text-gray-500">Guess: </span>
-                <span className="text-blue-400 font-semibold text-base">
+                <span className="text-blue-600 font-semibold text-base">
                   {response.guess}
                 </span>
               </div>
               {response.explanation && (
-                <div className="mt-1.5 pt-1.5 border-t border-gray-700">
+                <div className="mt-1.5 pt-1.5 border-t border-gray-200">
                   <div className="text-xs text-gray-500 mb-1">Explanation:</div>
-                  <div className="text-xs text-gray-300 font-mono whitespace-pre-wrap bg-gray-950 p-2 rounded">
+                  <div className="text-xs text-gray-700 font-mono whitespace-pre-wrap bg-gray-200 p-2 rounded">
                     {explanationText}
                   </div>
                 </div>
@@ -647,9 +684,9 @@ function PlayerBonusResponses() {
 }
 
 function getConfidenceColor(confidence: number): string {
-  if (confidence >= 0.9) return '#22c55e';
-  if (confidence >= 0.8) return '#84cc16';
-  if (confidence >= 0.6) return '#eab308';
-  if (confidence >= 0.5) return '#f97316';
+  if (confidence >= 0.9) return '#16a34a';
+  if (confidence >= 0.8) return '#65a30d';
+  if (confidence >= 0.6) return '#ca8a04';
+  if (confidence >= 0.5) return '#ea580c';
   return '#6b7280';
 }

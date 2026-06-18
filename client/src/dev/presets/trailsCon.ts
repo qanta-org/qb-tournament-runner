@@ -4,31 +4,51 @@ import type { DatasetInfo } from '../../api/datasets';
 import type { ApiRosterPlayer } from '../../api/rosters';
 
 export const TRAILS_CON_PRESET_ID = 'trails-con' as const;
-export type AutostartPresetId = typeof TRAILS_CON_PRESET_ID;
+export const QANTA26_PRESET_ID = 'qanta26' as const;
+
+export type AutostartPresetId = typeof TRAILS_CON_PRESET_ID | typeof QANTA26_PRESET_ID;
+
+const AUTOSTART_PRESET_IDS: readonly AutostartPresetId[] = [
+  TRAILS_CON_PRESET_ID,
+  QANTA26_PRESET_ID,
+];
+
+function asPresetId(value: string | undefined): AutostartPresetId | null {
+  const normalized = value?.trim().toLowerCase();
+  return (AUTOSTART_PRESET_IDS as readonly string[]).includes(normalized ?? '')
+    ? (normalized as AutostartPresetId)
+    : null;
+}
 
 export function getAutostartPreset(): AutostartPresetId | null {
   const qp = new URLSearchParams(window.location.search);
-  const fromQuery = qp.get('preset')?.trim().toLowerCase();
-  if (fromQuery === TRAILS_CON_PRESET_ID) return TRAILS_CON_PRESET_ID;
 
-  const fromEnv = String((import.meta as any).env?.VITE_AUTOSTART_PRESET ?? '')
-    .trim()
-    .toLowerCase();
-  if (fromEnv === TRAILS_CON_PRESET_ID) return TRAILS_CON_PRESET_ID;
+  // Allow opening a plain viewer/player client even when the dev server was
+  // launched with VITE_AUTOSTART_PRESET set (e.g. `npm run dev:qanta26`).
+  // `?join=CODE` (joining a room) or `?preset=none` disables autostart for this tab.
+  if (qp.has('join')) return null;
+  const rawPreset = qp.get('preset')?.trim().toLowerCase();
+  if (rawPreset === 'none' || rawPreset === 'off') return null;
 
-  return null;
+  const fromQuery = asPresetId(rawPreset ?? undefined);
+  if (fromQuery) return fromQuery;
+
+  return asPresetId(String((import.meta as any).env?.VITE_AUTOSTART_PRESET ?? ''));
 }
 
 function normalizeName(s: string): string {
   return s.trim().toLowerCase();
 }
 
-export function buildTrailsConGameConfig(params: {
+export function buildAutostartGameConfig(params: {
   dataset: DatasetInfo;
   humans: ApiRosterPlayer[];
   ais: ApiRosterPlayer[];
+  label?: string;
+  overrides?: Partial<GameConfig>;
 }): GameConfig {
-  const { dataset, humans, ais } = params;
+  const { dataset, humans, ais, overrides } = params;
+  const label = params.label ?? dataset.id ?? 'Autostart';
 
   const packet =
     dataset.type === 'tournament'
@@ -40,10 +60,10 @@ export function buildTrailsConGameConfig(params: {
   const modelDir = dataset.responsesDir ?? '';
 
   if (!tossupFile) {
-    throw new Error('Trails-Con dataset is missing tossup file path');
+    throw new Error(`${label} dataset is missing tossup file path`);
   }
   if (!modelDir) {
-    throw new Error('Trails-Con dataset is missing responses directory path');
+    throw new Error(`${label} dataset is missing responses directory path`);
   }
 
   const findByName = (roster: ApiRosterPlayer[], name: string) =>
@@ -75,6 +95,7 @@ export function buildTrailsConGameConfig(params: {
         extra_kwargs: {
           tossup_model: charizard.tossup_model || '',
           bonus_model: charizard.bonus_model || charizard.tossup_model || '',
+          weight_class: charizard.weight_class,
         },
       },
     ],
@@ -96,6 +117,7 @@ export function buildTrailsConGameConfig(params: {
         extra_kwargs: {
           tossup_model: snorlax.tossup_model || '',
           bonus_model: snorlax.bonus_model || snorlax.tossup_model || '',
+          weight_class: snorlax.weight_class,
         },
       },
     ],
@@ -119,6 +141,7 @@ export function buildTrailsConGameConfig(params: {
     tossupFile,
     bonusFile,
     modelDirectory: modelDir,
+    overrides,
   });
 }
 

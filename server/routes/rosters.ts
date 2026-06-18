@@ -16,6 +16,8 @@ const ROSTER_BASE_DIRS = [
   path.join(__dirname, '../../../'),              // Parent of buzzer-web
 ];
 
+type AIWeightClass = 'lightweight' | 'midweight' | 'heavyweight';
+
 interface AIRosterEntry {
   player_id: string;
   name: string;
@@ -26,6 +28,16 @@ interface AIRosterEntry {
   description?: string;
   default_buzzer_key?: string;
   skill_level?: string;
+  weight_class?: AIWeightClass;
+}
+
+/** Normalize a raw weight_class cell to a known value, or undefined if blank/unknown. */
+function normalizeWeightClass(raw: unknown): AIWeightClass | undefined {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (value === 'lightweight' || value === 'midweight' || value === 'heavyweight') {
+    return value;
+  }
+  return undefined;
 }
 
 interface HumanRosterEntry {
@@ -140,6 +152,7 @@ function loadRosterFile(filename: string): RosterEntry[] {
           description: record.description || '',
           default_buzzer_key: record.default_buzzer_key || '',
           skill_level: record.skill_level || '',
+          weight_class: normalizeWeightClass(record.weight_class),
         };
       } else {
         return {

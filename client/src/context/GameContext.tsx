@@ -8,6 +8,8 @@ import type {
   AnswerRuling,
   AppConfig,
   ClientRole,
+  AIBuzzMode,
+  BonusPartDecision,
 } from '../../../shared/types';
 import { createInitialGameState, DEFAULT_APP_CONFIG } from '../../../shared/types';
 
@@ -46,10 +48,13 @@ interface GameContextValue {
   nextWord: () => void;
   submitAnswerRuling: (ruling: AnswerRuling, answer: string) => void;
   adjustPoints: (adjustments: { team_a: number; team_b: number }) => void;
-  toggleMute: (playerId: string) => void;
+  setAiBuzzMode: (playerId: string, mode: AIBuzzMode) => void;
+  aiManualBuzz: (playerId: string) => void;
+  setAutonomousK: (playerId: string, k: number) => void;
   advanceBonusStage: () => void;
-  submitBonusHumanResponse: (responses: Record<string, string>) => void;
-  submitBonusFinalAnswer: (answer: string) => void;
+  advanceBonusPart: () => void;
+  revealBonusAi: () => void;
+  submitBonusPartResult: (data: { decision: BonusPartDecision; correct: boolean; answer: string }) => void;
   clearError: () => void;
 
   // Mid-game player management
@@ -241,21 +246,36 @@ export function GameProvider({ children }: GameProviderProps) {
     socket.emit('moderator:adjust_points', adjustments);
   }, []);
 
-  const toggleMute = useCallback((playerId: string) => {
-    socket.emit('player:mute_toggle', playerId);
+  const setAiBuzzMode = useCallback((playerId: string, mode: AIBuzzMode) => {
+    socket.emit('moderator:set_ai_buzz_mode', { playerId, mode });
+  }, []);
+
+  const setAutonomousK = useCallback((playerId: string, k: number) => {
+    socket.emit('moderator:set_autonomous_k', { playerId, k });
+  }, []);
+
+  const aiManualBuzz = useCallback((playerId: string) => {
+    socket.emit('moderator:ai_buzz', playerId);
   }, []);
 
   const advanceBonusStage = useCallback(() => {
     socket.emit('bonus:advance');
   }, []);
 
-  const submitBonusHumanResponse = useCallback((responses: Record<string, string>) => {
-    socket.emit('bonus:human_response', responses);
+  const advanceBonusPart = useCallback(() => {
+    socket.emit('bonus:next_part');
   }, []);
 
-  const submitBonusFinalAnswer = useCallback((answer: string) => {
-    socket.emit('bonus:final_answer', answer);
+  const revealBonusAi = useCallback(() => {
+    socket.emit('bonus:reveal_ai');
   }, []);
+
+  const submitBonusPartResult = useCallback(
+    (data: { decision: BonusPartDecision; correct: boolean; answer: string }) => {
+      socket.emit('bonus:part_result', data);
+    },
+    []
+  );
 
   const clearError = useCallback(() => {
     setError(null);
@@ -352,10 +372,13 @@ export function GameProvider({ children }: GameProviderProps) {
     nextWord,
     submitAnswerRuling,
     adjustPoints,
-    toggleMute,
+    setAiBuzzMode,
+    aiManualBuzz,
+    setAutonomousK,
     advanceBonusStage,
-    submitBonusHumanResponse,
-    submitBonusFinalAnswer,
+    advanceBonusPart,
+    revealBonusAi,
+    submitBonusPartResult,
     clearError,
 
     // Mid-game player management

@@ -1,3 +1,5 @@
+import type { AIWeightClass } from '../../../shared/types';
+
 export interface ApiRosterPlayer {
   player_id: string;
   name: string;
@@ -8,6 +10,7 @@ export interface ApiRosterPlayer {
   description?: string;
   default_buzzer_key?: string;
   skill_level?: string;
+  weight_class?: AIWeightClass;
   team?: string;
 }
 

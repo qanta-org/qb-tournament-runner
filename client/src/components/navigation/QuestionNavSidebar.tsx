@@ -74,7 +74,7 @@ export function QuestionNavSidebar() {
   const currentTossupIndex = gameState.currentTossupNum > 0 ? gameState.currentTossupNum - 1 : -1;
   const currentBonusIndex = gameState.currentBonusNum > 0 ? gameState.currentBonusNum - 1 : -1;
 
-  const isBonusPhase = ['bonus_leadin', 'bonus_part', 'bonus_human_response', 'bonus_final_answer'].includes(gameState.phase);
+  const isBonusPhase = ['bonus_leadin', 'bonus_part', 'bonus_part_reveal', 'bonus_human_response', 'bonus_final_answer'].includes(gameState.phase);
 
   return (
     <>

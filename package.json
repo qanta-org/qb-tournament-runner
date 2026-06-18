@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:trailscon": "concurrently \"npm run dev:server\" \"VITE_AUTOSTART_PRESET=trails-con npm run dev:client\"",
+    "dev:qanta26": "concurrently \"npm run dev:server\" \"VITE_AUTOSTART_PRESET=qanta26 npm run dev:client\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite",
     "build": "npm run build:client && npm run build:server",

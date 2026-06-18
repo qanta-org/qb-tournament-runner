@@ -112,6 +112,48 @@ You can then:
 - Use the UI at `http://localhost:5173` to start games and tournaments.
 - Open Swagger UI at `http://localhost:3001/api/docs` to explore and test REST APIs.
 
+### Dev-only single game presets
+
+For rapid iteration on a **single fixed matchup**, you can use dev-only preset entry points that auto-skip the setup wizard.
+
+From the repo root:
+
+```bash
+# Uses the data/trails-con dataset
+npm run dev:trailscon
+
+# Uses the data/qanta26 dataset
+npm run dev:qanta26
+```
+
+These will:
+
+- Start the backend on `http://localhost:3001` and the frontend (Vite) on an available port.
+- On first load, **auto-create a moderator room** and **auto-start a game** using the matching dataset:
+  - Team A: Alice (human) + Charizard (AI)
+  - Team B: Bob (human) + Snorlax (AI)
+- Bypass the normal Game Setup wizard so you can immediately test gameplay (buzzing, streaming, scoring, logs, etc.).
+
+Notes:
+
+- These presets are **development-only** and are only wired in when `import.meta.env.DEV` is true.
+- Each preset expects a tournament-style dataset at `data/<preset>/` (e.g. `data/trails-con/`, `data/qanta26/`) with:
+  - `packet_1/tossups.csv`, `packet_1/bonuses.csv`
+  - `ai_roster.csv`, `human_roster.csv`
+  - `responses/` with the relevant `*.buzz.csv` / `*.bonus.csv` files.
+- You can also select a preset at runtime with the `?preset=<id>` query param (e.g. `?preset=qanta26`).
+- For regular usage (manual dataset/roster selection and team configuration), continue to use `npm run dev` and the Game Setup wizard.
+
+#### Opening the player/viewer client during a preset run
+
+The preset tab itself is the **moderator** (this is also where humans buzz via the keyboard). Because the preset is set via `VITE_AUTOSTART_PRESET`, every tab opened at the Vite URL would otherwise auto-start its own moderator room. To open the **player/viewer** client instead:
+
+- Copy the room code from the moderator's top bar (e.g. `XU6GM`), then open a new tab at:
+  - `http://localhost:5173/?join=XU6GM` — auto-joins that room as a viewer.
+- Or open `http://localhost:5173/?preset=none` to land on the normal role-selection screen (then "Join as Viewer" and enter the code).
+
+Both `?join=<code>` and `?preset=none` suppress autostart for that tab, so it won't spawn a competing moderator room.
+
 ### Separate Servers (Optional)
 
 If you prefer to run client and server separately:
@@ -154,8 +196,26 @@ The tournament system orchestrates multiple games between pre-defined teams, tra
 2. **Teams** — Teams auto-grouped from human roster `team` column; enable/disable teams.
 3. **AI Assignment** — Optionally add AI players per team. No player on both teams in any game.
 4. **Format** — Round Robin only, Round Robin + Single Elim, or Single Elim. Option for grouped prelims.
-5. **Game Settings** — Powers, negs, bonus points (reused from single-game setup).
+5. **Game Settings** — Powers, negs, bonus points, and AI score deflation (reused from single-game setup). See [AI Score Deflation](#ai-score-deflation).
 6. **Review & Create** — Schedule preview; create tournament; receive 6-char code.
+
+### AI Score Deflation
+
+Both tossup and bonus AI scoring can be deflated based on AI model size (`weight_class`). Each is independently configurable in the rule preset / game settings with three modes:
+
+**Tossup deflation** (`tossup_deflation_mode`) — applied to a correct AI buzz, based on the buzzing AI's weight class:
+
+- `none` — full tossup points, regardless of weight class.
+- `static` — subtract a fixed `tossup_static_deflation` (default `5`) from the earned points.
+- `weighted` — multiply the earned points by `ai_tossup_score_factors[weight_class]` (default LW 1.0 / MW 0.8 / HW 0.4). This is the QANTA 2026 behavior.
+
+**Bonus consult deflation** (`bonus_deflation_mode`) — applied when a team correctly answers a bonus part via the AI-consult path:
+
+- `none` — full bonus part points.
+- `static` — subtract a fixed `bonus_static_deflation` (default `5`).
+- `weighted` — subtract the sum of `bonus_weight_deflation[weight_class]` (default LW 1 / MW 2 / HW 3) over **all AI teammates on the owning team**. Example: a team with LW + MW AIs caps a consulted part at `10 - 1 - 2 = 7`.
+
+All awards are clamped to a minimum of `0`. Deflation only affects positive earned points; tossup penalties for wrong buzzes, `own`/`abstain` bonus decisions are unaffected. The legacy `bonus_ai_consult_factor` is retained only as a fallback for configs saved before deflation modes existed.
 
 ### Tournament Dashboard
 
@@ -283,6 +343,7 @@ Multimodal asset resolution:
 | `part1`, `part2`, `part3` | Yes | Part questions |
 | `answer1`, `answer2`, `answer3` | Yes | Part answers |
 | `answerline1/2/3` | No | Formatted answer lines |
+| `answer_image1/2/3` | No | Packet-relative path (e.g. `img/b6_p1_a.png`) to an image shown on the per-part reveal screen alongside the answer |
 
 #### ai_roster.csv
 
@@ -295,6 +356,7 @@ Multimodal asset resolution:
 | `bonus_model` | Yes | Model name for bonuses |
 | `tossup_model_cost` | No | Cost metric |
 | `skill_level` | No | Skill tier (High, Mid, Low) |
+| `weight_class` | No | AI model weight class (`lightweight`, `midweight`, or `heavyweight`), used by the `weighted` tossup/bonus deflation modes. Defaults to `lightweight` when blank. See [AI Score Deflation](#ai-score-deflation). |
 
 **Important:** Model names must exactly match response file names (e.g., `Author__model` → `Author__model.buzz.csv`)
 
@@ -350,10 +412,12 @@ The application validates datasets and shows warnings/errors:
 | Key | Action |
 |-----|--------|
 | `1-9` (or custom) | Buzz for human player |
-| `→` or `Space` | Reveal next token / advance bonus |
-| `Y` | Accept answer (in review dialog) |
-| `N` | Reject answer with penalty |
-| `M` | Reject answer without penalty |
+| `A`,`S`,`D`,… (auto-assigned) | Buzz on behalf of a semi-autonomous AI |
+| `→` or `Space` | Reveal next token / advance bonus lead-in |
+| `=` or `+` | Accept answer (in review dialog) |
+| `-` | Reject answer (with penalty if configured, otherwise no penalty) |
+
+> Semi-autonomous AI keys are auto-assigned from a separate letter pool so they never collide with the human `1-9` buzzer keys. The assigned key is shown next to the AI in the scoreboard when it is in **Semi** mode.
 
 ---
 
@@ -375,6 +439,8 @@ The Swagger UI provides interactive documentation where you can explore and test
 ### Configuration
 - `GET /api/config/defaults` - Default game configuration
 - `POST /api/config/update` - Update configuration
+- `GET /api/config/presets` - List selectable rule presets (e.g. Default, QANTA 2026)
+- `GET /api/config/presets/:id` - Get a rule preset's config overrides
 
 ### Datasets
 - `GET /api/datasets/list` - List all available datasets with validation
@@ -427,10 +493,15 @@ The Swagger UI provides interactive documentation where you can explore and test
 - `moderator:add_player` - Add human player mid-game (moderator only)
 - `moderator:remove_player` - Remove human player mid-game (moderator only)
 - `moderator:can_modify_players` - Check if players can be modified (moderator only)
-- `player:mute_toggle` - Toggle AI player mute status (moderator only)
-- `bonus:advance` - Move to next bonus stage (moderator only)
-- `bonus:human_response` - Submit human response for bonus (moderator only)
-- `bonus:final_answer` - Submit final bonus answer (moderator only)
+- `moderator:set_ai_buzz_mode` - Set an AI's tossup buzz mode: `autonomous` / `muted` / `semi` (moderator only)
+- `moderator:set_autonomous_k` - Update a single AI's "autonomous after k tokens" threshold live during a game; `k=1` means no gate (moderator only)
+- `moderator:ai_buzz` - Buzz on behalf of a semi-autonomous AI (moderator only)
+- `bonus:advance` - Advance the bonus lead-in to the first part (moderator only)
+- `bonus:reveal_ai` - Reveal AI responses for the current bonus part / consult path (moderator only)
+- `bonus:part_result` - Resolve a bonus part with a decision (`own` / `consult_ai` / `abstain`) and correctness (moderator only). Moves to the per-part reveal screen
+- `bonus:next_part` - Advance from the per-part reveal screen (answer line, answer image, AI responses) to the next part or tossup (moderator only)
+
+> The legacy `player:mute_toggle`, `bonus:human_response`, and `bonus:final_answer` events are superseded by the events above under the QANTA 2026 rules.
 
 ### Game Events (Server → Client)
 - `game:state` - Full game state update (filtered for players)
@@ -688,10 +759,14 @@ buzzer-web/
 │   │   │   ├── question/       # Tossup question display
 │   │   │   ├── scoreboard/     # Team panels and scores
 │   │   │   └── setup/          # Game setup wizard
+│   │   ├── api/                # Lightweight client API types (datasets, rosters)
 │   │   ├── context/
 │   │   │   └── GameContext.tsx # Global state + Socket.io
+│   │   ├── dev/                # Dev-only helpers (e.g., Trails-Con autostart preset)
 │   │   ├── hooks/
 │   │   │   └── useKeyboardBuzzer.ts # Keyboard event handling
+│   │   ├── utils/
+│   │   │   └── buildGameConfig.ts   # Shared helper for building GameConfig objects
 │   │   ├── styles/
 │   │   │   └── globals.css     # Tailwind CSS
 │   │   ├── App.tsx             # Main app with role routing
