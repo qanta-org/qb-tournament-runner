@@ -1,3 +1,4 @@
+import { useEffect, useState, type ComponentType } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import { GameProvider, useGame } from './context/GameContext';
 import { GameLayout } from './components/layout/GameLayout';
@@ -187,9 +188,41 @@ function ModeratorGameWrapper({
   );
 }
 
+function DevAutostartLoader() {
+  const [DevComponent, setDevComponent] = useState<ComponentType | null>(null);
+
+  useEffect(() => {
+    const isDev = (import.meta as any).env?.DEV;
+    if (!isDev) return;
+
+    let cancelled = false;
+
+    import('./dev/DevAutostart')
+      .then((mod) => {
+        if (cancelled) return;
+        const Comp = (mod as any).default ?? (mod as any).DevAutostart;
+        if (Comp) {
+          setDevComponent(() => Comp);
+        }
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load DevAutostart module:', err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!DevComponent) return null;
+  return <DevComponent />;
+}
+
 export default function App() {
   return (
     <GameProvider>
+      <DevAutostartLoader />
       <Routes>
         <Route path="*" element={<AppContent />} />
       </Routes>

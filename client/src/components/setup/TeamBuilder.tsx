@@ -1,16 +1,8 @@
 import { useState, useEffect } from 'react';
 import type { Team, Player, PlayerType } from '../../../../shared/types';
+import type { ApiRosterPlayer } from '../../api/rosters';
 
-interface RosterPlayer {
-  player_id: string;
-  name: string;
-  type: 'ai' | 'human';
-  tossup_model?: string;
-  bonus_model?: string;
-  default_buzzer_key?: string;
-  skill_level?: string;
-  description?: string;
-}
+type RosterPlayer = ApiRosterPlayer;
 
 interface TeamBuilderProps {
   team: Team;

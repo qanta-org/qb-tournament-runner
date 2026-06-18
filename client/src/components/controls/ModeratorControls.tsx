@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useGame } from '../../context/GameContext';
 import { useKeyboardBuzzer } from '../../hooks/useKeyboardBuzzer';
 import { AdjustPointsDialog } from '../dialogs/AdjustPointsDialog';
+import { REVEAL_LOCKOUT_TICK_INTERVAL_MS } from '../../constants/time';
 
 export function ModeratorControls() {
   const {
@@ -36,7 +37,7 @@ export function ModeratorControls() {
     if (!gameState.revealLockoutUntilMs) {
       return;
     }
-    const interval = window.setInterval(() => setNowMs(Date.now()), 200);
+    const interval = window.setInterval(() => setNowMs(Date.now()), REVEAL_LOCKOUT_TICK_INTERVAL_MS);
     return () => window.clearInterval(interval);
   }, [gameState.revealLockoutUntilMs]);
 

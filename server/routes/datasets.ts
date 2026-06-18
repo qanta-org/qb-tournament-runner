@@ -12,7 +12,7 @@ export const datasetsRouter = Router();
 // Base directories to scan for datasets
 const DATA_BASE_DIRS = [
   path.join(__dirname, '../../../data/tourney'), // data/tourney (tournament data)
-  path.join(__dirname, '../../../'),              // Parent of buzzer-web (model-simulation root)
+  path.join(__dirname, '../../../data'),         // Repo data/ (single-game datasets like trails-con)
   path.join(__dirname, '../../data'),             // buzzer-web/data
   path.join(__dirname, '../../uploads'),          // buzzer-web/uploads
 ];
@@ -60,20 +60,20 @@ interface DatasetInfo {
   name: string;
   path: string;
   type: 'simple' | 'tournament';
-  
+
   // For simple datasets (single tossup/bonus file)
   hasTossups: boolean;
   hasBonuses: boolean;
   tossupFile?: string;
   bonusFile?: string;
-  
+
   // For tournament datasets (multiple packets)
   packets?: PacketInfo[];
-  
+
   // Model responses
   responsesDir?: string;
   models: ModelInfo[];
-  
+
   // Rosters
   hasAiRoster: boolean;
   hasHumanRoster: boolean;
@@ -81,7 +81,7 @@ interface DatasetInfo {
   humanRosterFile?: string;
   aiPlayers?: RosterPlayer[];
   humanPlayers?: RosterPlayer[];
-  
+
   // Validation
   validationIssues: ValidationIssue[];
   isValid: boolean;
@@ -109,7 +109,7 @@ function countCsvRows(filePath: string): number {
  */
 function loadRoster(filePath: string): RosterPlayer[] {
   if (!fs.existsSync(filePath)) return [];
-  
+
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
     const records = parse(content, {
@@ -118,7 +118,7 @@ function loadRoster(filePath: string): RosterPlayer[] {
       trim: true,
       relax_column_count: true,
     });
-    
+
     return records.map((record: any) => ({
       player_id: record.player_id || '',
       name: record.name || '',
@@ -139,15 +139,15 @@ function loadRoster(filePath: string): RosterPlayer[] {
  */
 function scanResponsesDir(responsesDir: string): ModelInfo[] {
   if (!fs.existsSync(responsesDir)) return [];
-  
+
   const files = fs.readdirSync(responsesDir);
   const modelMap = new Map<string, ModelInfo>();
-  
+
   for (const file of files) {
     // Match patterns like "model-name.buzz.csv" or "model-name.bonus.csv"
     const buzzMatch = file.match(/^(.+)\.buzz\.csv$/);
     const bonusMatch = file.match(/^(.+)\.bonus\.csv$/);
-    
+
     if (buzzMatch) {
       const modelName = buzzMatch[1];
       const existing = modelMap.get(modelName) || {
@@ -159,7 +159,7 @@ function scanResponsesDir(responsesDir: string): ModelInfo[] {
       existing.tossupFile = path.join(responsesDir, file);
       modelMap.set(modelName, existing);
     }
-    
+
     if (bonusMatch) {
       const modelName = bonusMatch[1];
       const existing = modelMap.get(modelName) || {
@@ -172,7 +172,7 @@ function scanResponsesDir(responsesDir: string): ModelInfo[] {
       modelMap.set(modelName, existing);
     }
   }
-  
+
   return Array.from(modelMap.values());
 }
 
@@ -182,7 +182,7 @@ function scanResponsesDir(responsesDir: string): ModelInfo[] {
 function scanPackets(dirPath: string): PacketInfo[] {
   const packets: PacketInfo[] = [];
   const files = fs.readdirSync(dirPath);
-  
+
   // Sort packet directories numerically
   const packetDirs = files
     .filter(f => f.startsWith('packet_') && fs.statSync(path.join(dirPath, f)).isDirectory())
@@ -191,18 +191,18 @@ function scanPackets(dirPath: string): PacketInfo[] {
       const numB = parseInt(b.replace('packet_', ''));
       return numA - numB;
     });
-  
+
   for (const packetDir of packetDirs) {
     const packetPath = path.join(dirPath, packetDir);
     const packetFiles = fs.readdirSync(packetPath);
-    
+
     const tossupFile = packetFiles.find(f => f === 'tossups.csv');
     const bonusFile = packetFiles.find(f => f === 'bonuses.csv');
-    
+
     if (tossupFile) {
       const tossupPath = path.join(packetPath, tossupFile);
       const bonusPath = bonusFile ? path.join(packetPath, bonusFile) : undefined;
-      
+
       packets.push({
         id: packetDir,
         name: `Packet ${packetDir.replace('packet_', '')}`,
@@ -213,7 +213,7 @@ function scanPackets(dirPath: string): PacketInfo[] {
       });
     }
   }
-  
+
   return packets;
 }
 
@@ -222,7 +222,7 @@ function scanPackets(dirPath: string): PacketInfo[] {
  */
 function validateDataset(info: Partial<DatasetInfo>): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  
+
   // Check for questions
   if (!info.hasTossups && (!info.packets || info.packets.length === 0)) {
     issues.push({
@@ -231,7 +231,7 @@ function validateDataset(info: Partial<DatasetInfo>): ValidationIssue[] {
       details: 'Expected tossups.csv in root directory or packet_*/tossups.csv for tournament format',
     });
   }
-  
+
   // Check for responses directory
   if (!info.responsesDir) {
     issues.push({
@@ -240,11 +240,11 @@ function validateDataset(info: Partial<DatasetInfo>): ValidationIssue[] {
       details: 'Create a "responses" folder with AI model response files (*.buzz.csv, *.bonus.csv)',
     });
   }
-  
+
   // Check AI roster vs available models
   if (info.aiPlayers && info.aiPlayers.length > 0 && info.models) {
     const availableModels = new Set(info.models.map(m => m.name));
-    
+
     for (const player of info.aiPlayers) {
       if (player.tossup_model && !availableModels.has(player.tossup_model)) {
         issues.push({
@@ -262,7 +262,7 @@ function validateDataset(info: Partial<DatasetInfo>): ValidationIssue[] {
       }
     }
   }
-  
+
   // Check for AI roster if AI models exist but no roster
   if (info.models && info.models.length > 0 && !info.hasAiRoster) {
     issues.push({
@@ -271,7 +271,7 @@ function validateDataset(info: Partial<DatasetInfo>): ValidationIssue[] {
       details: 'Create ai_roster.csv to define AI player names and their model assignments',
     });
   }
-  
+
   return issues;
 }
 
@@ -280,9 +280,9 @@ function validateDataset(info: Partial<DatasetInfo>): ValidationIssue[] {
  */
 function scanDirectory(dirPath: string, id: string): DatasetInfo | null {
   if (!fs.existsSync(dirPath)) return null;
-  
+
   const files = fs.readdirSync(dirPath);
-  
+
   const info: DatasetInfo = {
     id,
     name: id.replace(/[-_]/g, ' '),
@@ -296,7 +296,7 @@ function scanDirectory(dirPath: string, id: string): DatasetInfo | null {
     validationIssues: [],
     isValid: true,
   };
-  
+
   // Check for packets (tournament format)
   const packets = scanPackets(dirPath);
   if (packets.length > 0) {
@@ -306,15 +306,15 @@ function scanDirectory(dirPath: string, id: string): DatasetInfo | null {
     info.hasBonuses = packets.some(p => p.bonusFile);
   } else {
     // Simple format - single tossup/bonus file
-    const tossupFile = files.find(f => 
+    const tossupFile = files.find(f =>
       f === 'tossups.csv' || f === 'tossups.json' || f === 'tossups.jsonl'
     );
     if (tossupFile) {
       info.hasTossups = true;
       info.tossupFile = path.join(dirPath, tossupFile);
     }
-    
-    const bonusFile = files.find(f => 
+
+    const bonusFile = files.find(f =>
       f === 'bonuses.csv' || f === 'bonuses.json' || f === 'bonuses.jsonl'
     );
     if (bonusFile) {
@@ -322,37 +322,37 @@ function scanDirectory(dirPath: string, id: string): DatasetInfo | null {
       info.bonusFile = path.join(dirPath, bonusFile);
     }
   }
-  
+
   // Look for responses directory
   const responsesDir = files.find(f => {
     const fullPath = path.join(dirPath, f);
-    return (f === 'responses' || f === 'models') && 
-           fs.existsSync(fullPath) && 
-           fs.statSync(fullPath).isDirectory();
+    return (f === 'responses' || f === 'models') &&
+      fs.existsSync(fullPath) &&
+      fs.statSync(fullPath).isDirectory();
   });
-  
+
   if (responsesDir) {
     info.responsesDir = path.join(dirPath, responsesDir);
     info.models = scanResponsesDir(info.responsesDir);
   }
-  
+
   // Look for roster files
   if (files.includes('ai_roster.csv')) {
     info.hasAiRoster = true;
     info.aiRosterFile = path.join(dirPath, 'ai_roster.csv');
     info.aiPlayers = loadRoster(info.aiRosterFile);
   }
-  
+
   if (files.includes('human_roster.csv')) {
     info.hasHumanRoster = true;
     info.humanRosterFile = path.join(dirPath, 'human_roster.csv');
     info.humanPlayers = loadRoster(info.humanRosterFile);
   }
-  
+
   // Validate
   info.validationIssues = validateDataset(info);
   info.isValid = !info.validationIssues.some(i => i.type === 'error');
-  
+
   return info;
 }
 
@@ -409,32 +409,32 @@ function scanDirectory(dirPath: string, id: string): DatasetInfo | null {
 datasetsRouter.get('/list', (_req, res) => {
   const datasets: DatasetInfo[] = [];
   const seenPaths = new Set<string>();
-  
+
   for (const baseDir of DATA_BASE_DIRS) {
     if (!fs.existsSync(baseDir)) continue;
-    
+
     try {
       const entries = fs.readdirSync(baseDir, { withFileTypes: true });
-      
+
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
-        
+
         // Skip common non-data directories
         const skipDirs = [
-          'node_modules', 'dist', '.git', 'buzzer-web', 'scripts', 
-          'docs', 'slides', 'style', 'templates', 'latex', 'demos', 
+          'node_modules', 'dist', '.git', 'buzzer-web', 'scripts',
+          'docs', 'slides', 'style', 'templates', 'latex', 'demos',
           'resources', 'buzzer_app', 'configs', '.vscode'
         ];
         if (skipDirs.includes(entry.name)) continue;
-        
+
         const dirPath = path.join(baseDir, entry.name);
-        
+
         // Skip if already seen (prevent duplicates from multiple base dirs)
         if (seenPaths.has(dirPath)) continue;
         seenPaths.add(dirPath);
-        
+
         const info = scanDirectory(dirPath, entry.name);
-        
+
         if (info && (info.hasTossups || info.hasBonuses)) {
           datasets.push(info);
         }
@@ -443,7 +443,7 @@ datasetsRouter.get('/list', (_req, res) => {
       console.error(`Error scanning ${baseDir}:`, err);
     }
   }
-  
+
   res.json({ datasets });
 });
 
@@ -492,7 +492,7 @@ datasetsRouter.get('/asset', (req, res) => {
  */
 datasetsRouter.get('/:id', (req, res) => {
   const { id } = req.params;
-  
+
   for (const baseDir of DATA_BASE_DIRS) {
     const dirPath = path.join(baseDir, id);
     if (fs.existsSync(dirPath)) {
@@ -502,8 +502,8 @@ datasetsRouter.get('/:id', (req, res) => {
       }
     }
   }
-  
-  res.status(404).json({ 
+
+  res.status(404).json({
     error: 'Dataset not found',
     message: `Could not find dataset "${id}" in any of the data directories.`,
     help: 'Ensure your dataset folder contains tossups.csv and optionally bonuses.csv',
@@ -545,7 +545,7 @@ datasetsRouter.get('/:id', (req, res) => {
  */
 datasetsRouter.get('/:id/validate', (req, res) => {
   const { id } = req.params;
-  
+
   for (const baseDir of DATA_BASE_DIRS) {
     const dirPath = path.join(baseDir, id);
     if (fs.existsSync(dirPath)) {
@@ -566,7 +566,7 @@ datasetsRouter.get('/:id/validate', (req, res) => {
       }
     }
   }
-  
+
   res.status(404).json({ error: 'Dataset not found' });
 });
 

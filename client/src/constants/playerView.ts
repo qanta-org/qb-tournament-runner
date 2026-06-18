@@ -1,0 +1,2 @@
+export const BONUS_AI_EXPLANATION_MAX_WORDS = 100;
+

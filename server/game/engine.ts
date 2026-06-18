@@ -113,7 +113,8 @@ export class GameEngine {
     this.initializeQuestionResults();
 
     // Create output directory for game logs
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16);
+    // Include seconds to reduce collisions when starting games quickly.
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const runsDir = path.join(process.cwd(), 'runs');
     this.outputDir = path.join(runsDir, timestamp);
     try {

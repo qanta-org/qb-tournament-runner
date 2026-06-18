@@ -72,6 +72,24 @@ export function emitStateToRoom(
   const room = roomManager.getRoom(roomCode);
   if (!room) return;
 
+   // If an AI just buzzed, play the buzzer sound for the moderator.
+   if (state.phase === 'answer_review' && state.buzzingPlayer && room.gameConfig) {
+     const prevState = room.gameState;
+     const justEnteredAnswerReview = !prevState || prevState.phase !== 'answer_review';
+
+     if (justEnteredAnswerReview) {
+       const allPlayers = [
+         ...room.gameConfig.team_a.players,
+         ...room.gameConfig.team_b.players,
+       ];
+       const buzzingPlayer = allPlayers.find(p => p.player_id === state.buzzingPlayer);
+
+       if (buzzingPlayer && buzzingPlayer.type === 'ai') {
+         io.to(room.moderatorId).emit('sound:buzz');
+       }
+     }
+   }
+
   io.to(room.moderatorId).emit('game:state', state);
 
   const filteredState = filterStateForPlayer(state);

@@ -31,6 +31,8 @@ The directory tree in `README.md` gives a concise snapshot of these folders.
 - **`main.tsx`**: React root; wraps `App` in providers (including `GameContext`).
 - **`App.tsx`**: Main application component that routes between moderator and player/tournament views based on role.
 - **`socket.ts`**: Socket.io client initialization and connection management (single shared client).
+- **Dev-only presets**:
+  - `dev/DevAutostart.tsx` and `dev/presets/trailsCon.ts` implement a development-only **Trails-Con single-game preset** that auto-creates a room and starts a game when `VITE_AUTOSTART_PRESET=trails-con` (used by `npm run dev:trailscon`).
 
 ### State Management
 

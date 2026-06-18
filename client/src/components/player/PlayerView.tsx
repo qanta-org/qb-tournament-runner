@@ -1,22 +1,21 @@
 import { useEffect, useState } from 'react';
 import { useGame } from '../../context/GameContext';
 import type { Team, TeamId, Player, TossupResponse } from '../../../../shared/types';
+import { BONUS_AI_EXPLANATION_MAX_WORDS } from '../../constants/playerView';
+import { truncateWords } from '../../utils/text';
+import {
+  MS_PER_SECOND,
+  REVEAL_LOCKOUT_SECONDS_DECIMALS,
+  REVEAL_LOCKOUT_TICK_INTERVAL_MS,
+} from '../../constants/time';
 
 /**
  * PlayerView - Read-only game display for spectators/players
- * 
- * Layout:
- * - Row 1: Team A panel (left) | Room info (center) | Team B panel (right)
- * - Row 2: Question display with AI outputs
- * 
- * Shows:
- * - Team panels with player names and mute status
- * - Current scores
- * - Question text (as revealed)
- * - Who buzzed and their guess
- * - Bonus questions with lead-in visible for all parts
- * - AI confidences (not guesses for tossups)
- * - Full AI model outputs with explanations
+ *
+ * Layout (fixed 3-column grid, center never shifts):
+ *   Left column  : Team A panel, then Team A AI outputs (tossup confidences / bonus suggestions)
+ *   Center column: Question type/number header + question content (tossup or bonus)
+ *   Right column : Team B panel, then Team B AI outputs
  */
 export function PlayerView() {
   const { gameState, gameConfig, roomCode, leaveRoom, getPlayer, getTeamColor } = useGame();
@@ -44,15 +43,14 @@ export function PlayerView() {
   }
 
   const buzzingPlayer = gameState.buzzingPlayer ? getPlayer(gameState.buzzingPlayer) : null;
-  
-  // Get the team of the buzzing player for color
+
   const getBuzzingPlayerTeam = (): 'team_a' | 'team_b' | null => {
     if (!gameState.buzzingPlayer || !gameConfig) return null;
     const inTeamA = gameConfig.team_a.players.some(p => p.player_id === gameState.buzzingPlayer);
     return inTeamA ? 'team_a' : 'team_b';
   };
   const buzzingTeam = getBuzzingPlayerTeam();
-  const buzzTeamColor = buzzingTeam ? getTeamColor(buzzingTeam) : '#eab308'; // fallback to yellow
+  const buzzTeamColor = buzzingTeam ? getTeamColor(buzzingTeam) : '#eab308';
 
   const isTossupPhase = ['tossup_ready', 'tossup_streaming', 'answer_review'].includes(gameState.phase);
   const isBonusPhase = [
@@ -61,6 +59,9 @@ export function PlayerView() {
     'bonus_human_response',
     'bonus_final_answer',
   ].includes(gameState.phase);
+
+  const bonusOwner = gameState.bonusOwner;
+
   const lockoutRemainingMs = Math.max(0, (gameState.revealLockoutUntilMs ?? 0) - nowMs);
   const revealedTokens = gameState.revealedTossupTokens;
   const renderableRevealedTokens = revealedTokens.filter(
@@ -69,9 +70,7 @@ export function PlayerView() {
   const lastRevealedImageToken = (() => {
     for (let i = revealedTokens.length - 1; i >= 0; i--) {
       const token = revealedTokens[i];
-      if (token.kind === 'multimodal' && token.tokenType === 'img') {
-        return token;
-      }
+      if (token.kind === 'multimodal' && token.tokenType === 'img') return token;
     }
     return null;
   })();
@@ -84,16 +83,25 @@ export function PlayerView() {
 
   useEffect(() => {
     if (!gameState.revealLockoutUntilMs) return;
-    const interval = window.setInterval(() => setNowMs(Date.now()), 200);
+    const interval = window.setInterval(() => setNowMs(Date.now()), REVEAL_LOCKOUT_TICK_INTERVAL_MS);
     return () => window.clearInterval(interval);
   }, [gameState.revealLockoutUntilMs]);
 
+  const showBonusResponsesForTeam = (teamId: TeamId) =>
+    isBonusPhase &&
+    bonusOwner === teamId &&
+    gameState.bonusStage === 'final_answer' &&
+    gameState.bonusResponses.length > 0;
+
   return (
-    <div className="min-h-screen bg-gray-900 text-white flex flex-col">
-      {/* Row 1: Team panels at corners with room info in center */}
-      <div className="flex-shrink-0 p-4">
-        <div className="max-w-7xl mx-auto grid grid-cols-3 gap-4">
-          {/* Team A Panel (Left) */}
+    <div className="min-h-screen bg-gray-900 text-white">
+      {/* Full-width 3-column grid — proportions fixed so center never shifts */}
+      <div
+        className="w-full max-w-screen-2xl mx-auto min-h-screen grid gap-3 p-3"
+        style={{ gridTemplateColumns: '22% 1fr 22%' }}
+      >
+        {/* ── LEFT COLUMN: Team A ── */}
+        <div className="flex flex-col gap-3 min-w-0">
           <PlayerTeamPanel
             team={gameConfig.team_a}
             teamId="team_a"
@@ -103,54 +111,45 @@ export function PlayerView() {
             teamColor={getTeamColor('team_a')}
           />
 
-          {/* Center: Room info and question progress */}
-          <div className="flex flex-col items-center justify-center">
-            <div className="text-center mb-2">
-              <div className="text-xs text-gray-500">Join Code</div>
-              <div className="flex items-center justify-center gap-2">
-                <span className="font-mono text-xl text-blue-400 bg-gray-800 px-3 py-1 rounded tracking-wider">{roomCode}</span>
-                <button
-                  onClick={() => navigator.clipboard.writeText(roomCode || '')}
-                  className="text-gray-500 hover:text-blue-400 text-sm"
-                  title="Copy code"
-                >
-                  📋
-                </button>
+          {/* Team A tossup AI confidences */}
+          {isTossupPhase && gameState.currentGuesses.length > 0 && (
+            <TeamTossupConfidences
+              teamId="team_a"
+              guesses={gameState.currentGuesses}
+            />
+          )}
+
+          {/* Team A bonus AI suggestions */}
+          {showBonusResponsesForTeam('team_a') && (
+            <PlayerBonusResponses />
+          )}
+        </div>
+
+        {/* ── CENTER COLUMN: Question content ── */}
+        <div className="flex flex-col gap-3 min-w-0">
+          {/* Header: question type + number */}
+          <div className="flex items-center justify-between px-1 pt-1">
+            <div>
+              <div className="text-xs text-gray-500 uppercase tracking-widest">
+                {isBonusPhase ? 'Bonus Question' : 'Tossup Question'}
               </div>
-            </div>
-            <div className="text-gray-400 text-sm">
-              {isBonusPhase 
-                ? `Bonus ${gameState.currentBonusNum} of ${gameState.totalBonuses}`
-                : `Tossup ${gameState.currentTossupNum} of ${gameState.totalTossups}`
-              }
+              <div className="text-base text-gray-300 font-medium">
+                {isBonusPhase
+                  ? `Bonus ${gameState.currentBonusNum} of ${gameState.totalBonuses}`
+                  : `Tossup ${gameState.currentTossupNum} of ${gameState.totalTossups}`}
+              </div>
             </div>
             <button
               onClick={leaveRoom}
-              className="mt-2 text-gray-500 hover:text-white text-xs transition-colors"
+              className="text-gray-600 hover:text-gray-300 text-xs transition-colors"
             >
-              Leave Room
+              Leave
             </button>
           </div>
 
-          {/* Team B Panel (Right) */}
-          <PlayerTeamPanel
-            team={gameConfig.team_b}
-            teamId="team_b"
-            score={gameState.scores.team_b}
-            buzzingPlayer={gameState.buzzingPlayer}
-            mutedPlayers={gameState.mutedPlayers}
-            teamColor={getTeamColor('team_b')}
-          />
-        </div>
-      </div>
-
-      {/* Row 2: Question display */}
-      <div className="flex-1 overflow-auto p-4 pt-0">
-        <div className="max-w-5xl mx-auto space-y-4">
-          {/* Tossup display */}
+          {/* Tossup question */}
           {isTossupPhase && (
-            <div className="bg-gray-800 rounded-2xl p-6">
-              {/* Power indicator */}
+            <div className="bg-gray-800 rounded-2xl p-6 flex-1">
               {gameConfig.enable_power_points && gameState.tossupPointsValue > gameConfig.default_points_value && (
                 <div className="text-center mb-4">
                   <span className="bg-yellow-500/20 text-yellow-400 px-3 py-1 rounded-full text-sm">
@@ -159,7 +158,6 @@ export function PlayerView() {
                 </div>
               )}
 
-              {/* Question text with inline multimodal chips */}
               <div className="text-xl leading-relaxed text-gray-100 flex flex-wrap items-center gap-x-2 gap-y-2">
                 {renderableRevealedTokens.length > 0 ? (
                   renderableRevealedTokens.map((token, index) => {
@@ -205,11 +203,10 @@ export function PlayerView() {
 
               {lockoutRemainingMs > 0 && (
                 <div className="mt-3 text-amber-300 text-sm">
-                  Next token unlocks in {(lockoutRemainingMs / 1000).toFixed(1)}s
+                  Next token unlocks in {(lockoutRemainingMs / MS_PER_SECOND).toFixed(REVEAL_LOCKOUT_SECONDS_DECIMALS)}s
                 </div>
               )}
 
-              {/* Word progress bar */}
               <div className="mt-4 flex items-center gap-2">
                 <div className="flex-1 h-1 bg-gray-700 rounded-full overflow-hidden">
                   <div
@@ -224,7 +221,6 @@ export function PlayerView() {
                 </span>
               </div>
 
-              {/* Answer line (when revealed) - rendered as HTML */}
               {gameState.currentTossupAnswer && (
                 <div className="mt-4 pt-4 border-t border-gray-700">
                   <div className="text-sm text-green-400 mb-1">Answer:</div>
@@ -235,7 +231,6 @@ export function PlayerView() {
                 </div>
               )}
 
-              {/* Image below question text */}
               {lastRevealedImageToken && (
                 <div className="mt-6 flex flex-col items-center">
                   <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2 w-full">
@@ -253,63 +248,41 @@ export function PlayerView() {
             </div>
           )}
 
-          {/* Buzz indicator - uses team color */}
+          {/* Buzz indicator */}
           {gameState.phase === 'answer_review' && buzzingPlayer && (
-            <div 
+            <div
               className="rounded-xl p-4 animate-pulse"
-              style={{ 
+              style={{
                 backgroundColor: `${buzzTeamColor}15`,
-                border: `2px solid ${buzzTeamColor}` 
+                border: `2px solid ${buzzTeamColor}`,
               }}
             >
               <div className="text-center">
                 <div className="text-lg mb-1" style={{ color: buzzTeamColor }}>🔔 BUZZ!</div>
-                <div className="text-xl font-bold text-white mb-1">
-                  {buzzingPlayer.name}
-                </div>
+                <div className="text-xl font-bold text-white mb-1">{buzzingPlayer.name}</div>
                 {gameState.buzzingPlayerGuess && (
-                  <div className="text-lg text-gray-300">
-                    "{gameState.buzzingPlayerGuess}"
-                  </div>
+                  <div className="text-lg text-gray-300">"{gameState.buzzingPlayerGuess}"</div>
                 )}
-                <div className="text-sm text-gray-500 mt-2">
-                  Awaiting moderator ruling...
-                </div>
+                <div className="text-sm text-gray-500 mt-2">Awaiting moderator ruling...</div>
               </div>
             </div>
           )}
 
-          {/* Bonus display */}
-          {isBonusPhase && gameState.bonusQuestion && (
-            <PlayerBonusDisplay />
-          )}
-
-          {/* AI Outputs - Tossup confidences only (no guesses) */}
-          {isTossupPhase && gameState.currentGuesses.length > 0 && (
-            <PlayerTossupConfidences guesses={gameState.currentGuesses} />
-          )}
-
-          {/* AI Outputs - Bonus responses with full explanation */}
-          {isBonusPhase && gameState.bonusStage === 'final_answer' && gameState.bonusResponses.length > 0 && (
-            <PlayerBonusResponses />
-          )}
+          {/* Bonus question */}
+          {isBonusPhase && gameState.bonusQuestion && <PlayerBonusDisplay />}
 
           {/* Game over */}
           {gameState.phase === 'game_over' && (
             <div className="text-center py-12 bg-gray-800 rounded-2xl">
               <h2 className="text-4xl font-bold mb-4">🎉 Game Over!</h2>
               <div className="text-2xl text-gray-400">
-                Final Score: {gameState.scores.team_a} - {gameState.scores.team_b}
+                Final Score: {gameState.scores.team_a} – {gameState.scores.team_b}
               </div>
               <div className="mt-4 text-xl">
                 {gameState.scores.team_a > gameState.scores.team_b ? (
-                  <span style={{ color: getTeamColor('team_a') }}>
-                    {gameConfig.team_a.name} Wins!
-                  </span>
+                  <span style={{ color: getTeamColor('team_a') }}>{gameConfig.team_a.name} Wins!</span>
                 ) : gameState.scores.team_b > gameState.scores.team_a ? (
-                  <span style={{ color: getTeamColor('team_b') }}>
-                    {gameConfig.team_b.name} Wins!
-                  </span>
+                  <span style={{ color: getTeamColor('team_b') }}>{gameConfig.team_b.name} Wins!</span>
                 ) : (
                   <span className="text-gray-400">It's a Tie!</span>
                 )}
@@ -317,14 +290,40 @@ export function PlayerView() {
             </div>
           )}
         </div>
+
+        {/* ── RIGHT COLUMN: Team B ── */}
+        <div className="flex flex-col gap-3 min-w-0">
+          <PlayerTeamPanel
+            team={gameConfig.team_b}
+            teamId="team_b"
+            score={gameState.scores.team_b}
+            buzzingPlayer={gameState.buzzingPlayer}
+            mutedPlayers={gameState.mutedPlayers}
+            teamColor={getTeamColor('team_b')}
+          />
+
+          {/* Team B tossup AI confidences */}
+          {isTossupPhase && gameState.currentGuesses.length > 0 && (
+            <TeamTossupConfidences
+              teamId="team_b"
+              guesses={gameState.currentGuesses}
+            />
+          )}
+
+          {/* Team B bonus AI suggestions */}
+          {showBonusResponsesForTeam('team_b') && (
+            <PlayerBonusResponses />
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-/**
- * Team panel for player view - shows team name, players, and mute status
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// Team panel
+// ─────────────────────────────────────────────────────────────────────────────
+
 function PlayerTeamPanel({
   team,
   teamId,
@@ -346,53 +345,51 @@ function PlayerTeamPanel({
   const renderPlayer = (player: Player) => {
     const isMuted = mutedPlayers.includes(player.player_id);
     const isBuzzing = buzzingPlayer === player.player_id;
-    const buzzerKey = player.type === 'human' 
-      ? (player.extra_kwargs as { buzzer_key: string }).buzzer_key 
-      : null;
+    const buzzerKey =
+      player.type === 'human' ? (player.extra_kwargs as { buzzer_key: string }).buzzer_key : null;
 
     return (
       <div
         key={player.player_id}
-        className={`flex items-center gap-2 text-sm py-0.5 ${isBuzzing ? 'animate-pulse bg-yellow-500/20 rounded px-1 -mx-1' : ''}`}
+        className={`flex items-center gap-2 py-0.5 ${isBuzzing ? 'animate-pulse bg-yellow-500/20 rounded px-1 -mx-1' : ''}`}
       >
-        <span className="text-xs">{player.type === 'human' ? '👤' : '🤖'}</span>
+        <span className="text-sm">{player.type === 'human' ? '👤' : '🤖'}</span>
         {buzzerKey && (
           <span className="px-1 py-0.5 bg-gray-700 rounded text-xs font-mono text-gray-300">
             {buzzerKey}
           </span>
         )}
-        <span className={`text-sm ${isMuted ? 'line-through text-gray-500' : 'text-gray-200'}`}>
+        <span className={`text-base leading-snug ${isMuted ? 'line-through text-gray-500' : 'text-gray-200'}`}>
           {player.name}
         </span>
-        {isMuted && <span className="text-gray-500 text-xs">🔇</span>}
-        {isBuzzing && <span className="text-yellow-400 text-xs">🚨</span>}
+        {isMuted && <span className="text-gray-500 text-xs ml-auto">🔇</span>}
+        {isBuzzing && <span className="text-yellow-400 text-xs ml-auto">🚨</span>}
       </div>
     );
   };
 
+  // Suppress unused variable warning — teamId may be used by callers for layout decisions
+  void teamId;
+
   return (
     <div
-      className="bg-gray-800 rounded-xl p-3"
-      style={{ borderTop: `3px solid ${teamColor}` }}
+      className="bg-gray-800 rounded-xl p-4"
+      style={{ borderTop: `4px solid ${teamColor}` }}
     >
-      {/* Team name and score in same row */}
-      <div className="flex justify-between items-center mb-2">
-        <h3 className="text-base font-bold" style={{ color: teamColor }}>
+      {/* Team name + score */}
+      <div className="flex justify-between items-center mb-3">
+        <h3 className="text-xl font-bold truncate pr-2" style={{ color: teamColor }}>
           {team.name}
         </h3>
-        <div
-          className="text-3xl font-bold"
-          style={{ color: teamColor }}
-        >
+        <div className="text-5xl font-bold tabular-nums shrink-0" style={{ color: teamColor }}>
           {score}
         </div>
       </div>
 
-      {/* Players list - compact */}
       <div className="space-y-0.5">
         {humanPlayers.map(renderPlayer)}
         {aiPlayers.length > 0 && humanPlayers.length > 0 && (
-          <div className="border-t border-gray-700 my-1" />
+          <div className="border-t border-gray-700 my-1.5" />
         )}
         {aiPlayers.map(renderPlayer)}
       </div>
@@ -400,122 +397,69 @@ function PlayerTeamPanel({
   );
 }
 
-/**
- * Tossup confidences display - shows only confidence levels, NOT guesses
- */
-function PlayerTossupConfidences({ guesses }: { guesses: TossupResponse[] }) {
-  const { gameConfig, getTeamColor } = useGame();
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-team tossup AI confidence panel (goes in side column)
+// ─────────────────────────────────────────────────────────────────────────────
 
+function TeamTossupConfidences({
+  teamId,
+  guesses,
+}: {
+  teamId: TeamId;
+  guesses: TossupResponse[];
+}) {
+  const { gameConfig, getTeamColor } = useGame();
   if (!gameConfig) return null;
 
-  const getPlayerInfo = (systemName: string) => {
-    for (const player of gameConfig.team_a.players) {
-      if (player.type === 'ai') {
-        const kwargs = player.extra_kwargs as { tossup_model: string };
-        if (kwargs.tossup_model === systemName) {
-          return { player, teamId: 'team_a' as const };
-        }
-      }
-    }
-    for (const player of gameConfig.team_b.players) {
-      if (player.type === 'ai') {
-        const kwargs = player.extra_kwargs as { tossup_model: string };
-        if (kwargs.tossup_model === systemName) {
-          return { player, teamId: 'team_b' as const };
-        }
-      }
-    }
-    return null;
-  };
+  const team = teamId === 'team_a' ? gameConfig.team_a : gameConfig.team_b;
+  const aiPlayers = team.players.filter((p) => p.type === 'ai');
+  if (aiPlayers.length === 0) return null;
 
-  const sortedGuesses = [...guesses].sort((a, b) => b.confidence - a.confidence);
+  const teamColor = getTeamColor(teamId);
 
   return (
-    <div className="bg-gray-800 rounded-xl p-4">
-      <h3 className="text-sm font-semibold text-gray-400 mb-3">AI Confidence Levels</h3>
-      <div className="grid grid-cols-2 gap-4">
-        {/* Team A */}
-        <div>
-          <div
-            className="text-xs font-medium mb-2"
-            style={{ color: getTeamColor('team_a') }}
-          >
-            {gameConfig.team_a.name}
-          </div>
-          {gameConfig.team_a.players
-            .filter(p => p.type === 'ai')
-            .map(player => {
-              const model = (player.extra_kwargs as { tossup_model: string }).tossup_model;
-              const guess = sortedGuesses.find(g => g.system === model);
-              const confColor = guess ? getConfidenceColor(guess.confidence) : '#888888';
-              return (
-                <div key={player.player_id} className="mb-2 p-2 bg-gray-900 rounded flex items-center justify-between">
-                  <span className="text-sm text-gray-300">{player.name}</span>
-                  <div className="flex items-center gap-2">
-                    {guess?.buzz && <span className="text-red-400 text-xs">🚨</span>}
-                    <span 
-                      className="font-bold text-sm"
-                      style={{ color: confColor }}
-                    >
-                      {guess ? `${Math.round(guess.confidence * 100)}%` : '-'}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-        </div>
-
-        {/* Team B */}
-        <div>
-          <div
-            className="text-xs font-medium mb-2"
-            style={{ color: getTeamColor('team_b') }}
-          >
-            {gameConfig.team_b.name}
-          </div>
-          {gameConfig.team_b.players
-            .filter(p => p.type === 'ai')
-            .map(player => {
-              const model = (player.extra_kwargs as { tossup_model: string }).tossup_model;
-              const guess = sortedGuesses.find(g => g.system === model);
-              const confColor = guess ? getConfidenceColor(guess.confidence) : '#888888';
-              return (
-                <div key={player.player_id} className="mb-2 p-2 bg-gray-900 rounded flex items-center justify-between">
-                  <span className="text-sm text-gray-300">{player.name}</span>
-                  <div className="flex items-center gap-2">
-                    {guess?.buzz && <span className="text-red-400 text-xs">🚨</span>}
-                    <span 
-                      className="font-bold text-sm"
-                      style={{ color: confColor }}
-                    >
-                      {guess ? `${Math.round(guess.confidence * 100)}%` : '-'}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-        </div>
+    <div className="bg-gray-800 rounded-xl p-3">
+      <div className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: teamColor }}>
+        AI Confidence
+      </div>
+      <div className="space-y-1.5">
+        {aiPlayers.map((player) => {
+          const model = (player.extra_kwargs as { tossup_model: string }).tossup_model;
+          const guess = guesses.find((g) => g.system === model);
+          const confColor = guess ? getConfidenceColor(guess.confidence) : '#888888';
+          return (
+            <div
+              key={player.player_id}
+              className="flex items-center justify-between bg-gray-900 rounded px-2 py-1.5"
+            >
+              <span className="text-sm text-gray-300 truncate pr-2">{player.name}</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {guess?.buzz && <span className="text-red-400 text-xs">🚨</span>}
+                <span className="font-bold text-sm" style={{ color: confColor }}>
+                  {guess ? `${Math.round(guess.confidence * 100)}%` : '–'}
+                </span>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-/**
- * Bonus display for player view - shows lead-in for ALL parts
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// Bonus question display (center column)
+// ─────────────────────────────────────────────────────────────────────────────
+
 function PlayerBonusDisplay() {
   const { gameState, gameConfig, getTeamColor } = useGame();
 
-  if (!gameConfig || !gameState.bonusQuestion || !gameState.bonusOwner) {
-    return null;
-  }
+  if (!gameConfig || !gameState.bonusQuestion || !gameState.bonusOwner) return null;
 
   const bonus = gameState.bonusQuestion;
   const teamColor = getTeamColor(gameState.bonusOwner);
   const teamName =
-    gameState.bonusOwner === 'team_a'
-      ? gameConfig.team_a.name
-      : gameConfig.team_b.name;
+    gameState.bonusOwner === 'team_a' ? gameConfig.team_a.name : gameConfig.team_b.name;
 
   const currentPart = gameState.currentBonusPart;
   const totalParts = bonus.parts.length;
@@ -523,18 +467,14 @@ function PlayerBonusDisplay() {
 
   return (
     <div className="bg-gray-800 rounded-2xl overflow-hidden">
-      {/* Bonus header */}
-      <div
-        className="p-3 text-white text-center"
-        style={{ backgroundColor: teamColor }}
-      >
+      <div className="p-3 text-white text-center" style={{ backgroundColor: teamColor }}>
         <h3 className="text-lg font-bold">BONUS for {teamName}</h3>
       </div>
 
       <div className="p-6 space-y-4">
-        {/* Lead-in - ALWAYS visible for all parts */}
-        <div 
-          className="text-lg text-gray-200 pb-4 border-b border-gray-700 bg-gray-900/50 p-4 rounded-lg"
+        {/* Lead-in */}
+        <div
+          className="text-lg text-gray-200 bg-gray-900/50 p-4 rounded-lg"
           style={{ borderLeft: `4px solid ${teamColor}` }}
         >
           <div className="text-xs text-gray-500 mb-1 uppercase tracking-wide">Lead-in</div>
@@ -559,40 +499,32 @@ function PlayerBonusDisplay() {
         {/* Current part */}
         {showPart && currentPart < totalParts && (
           <div>
-            <div 
+            <div
               className="text-sm font-semibold mb-2 px-3 py-1 rounded inline-block"
               style={{ backgroundColor: teamColor, color: 'white' }}
             >
               Part {currentPart + 1} of {totalParts} ({gameConfig.bonus_part_points} pts)
             </div>
             <div className="space-y-3 mt-2">
-              <div className="text-xl text-gray-100">
-                {bonus.parts[currentPart]?.text}
-              </div>
+              <div className="text-xl text-gray-100">{bonus.parts[currentPart]?.text}</div>
               {bonus.parts[currentPart].media?.audioUrl && (
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const audio = new Audio(bonus.parts[currentPart].media!.audioUrl!);
-                      audio.play().catch(() => {});
-                    }}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-blue-600/20 text-blue-200 text-sm font-medium border border-blue-500/40"
-                  >
-                    <span>▶</span>
-                    <span>
-                      {bonus.parts[currentPart].media!.audioDisplayText || 'Play audio'}
-                    </span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const audio = new Audio(bonus.parts[currentPart].media!.audioUrl!);
+                    audio.play().catch(() => {});
+                  }}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-blue-600/20 text-blue-200 text-sm font-medium border border-blue-500/40"
+                >
+                  <span>▶</span>
+                  <span>{bonus.parts[currentPart].media!.audioDisplayText || 'Play audio'}</span>
+                </button>
               )}
             </div>
-
-            {/* Answer line (rendered as HTML) */}
             {gameState.currentBonusPartAnswer && (
               <div className="mt-4 pt-4 border-t border-gray-700">
                 <div className="text-sm text-green-400 mb-1">Answer:</div>
-                <div 
+                <div
                   className="text-lg text-green-300 font-semibold"
                   dangerouslySetInnerHTML={{ __html: gameState.currentBonusPartAnswer }}
                 />
@@ -601,12 +533,11 @@ function PlayerBonusDisplay() {
           </div>
         )}
 
-        {/* Unified image box: part image replaces lead-in image when present */}
+        {/* Image */}
         {(() => {
           const leadinImg = bonus.leadinMedia?.imageUrl;
-          const partImg = showPart && currentPart < totalParts
-            ? bonus.parts[currentPart].media?.imageUrl
-            : undefined;
+          const partImg =
+            showPart && currentPart < totalParts ? bonus.parts[currentPart].media?.imageUrl : undefined;
           const displayImg = partImg ?? leadinImg;
           if (!displayImg) return null;
           return (
@@ -625,14 +556,14 @@ function PlayerBonusDisplay() {
           );
         })()}
 
-        {/* Progress indicator */}
+        {/* Progress bar */}
         <div className="flex items-center gap-3 pt-4 border-t border-gray-700">
           <div className="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
             <div
               className="h-full transition-all duration-300"
-              style={{ 
-                width: `${((currentPart + 1) / totalParts) * 100}%`, 
-                backgroundColor: teamColor 
+              style={{
+                width: `${((currentPart + 1) / totalParts) * 100}%`,
+                backgroundColor: teamColor,
               }}
             />
           </div>
@@ -645,9 +576,10 @@ function PlayerBonusDisplay() {
   );
 }
 
-/**
- * Bonus responses display - shows full AI outputs with explanations
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// Bonus AI responses panel (side columns)
+// ─────────────────────────────────────────────────────────────────────────────
+
 function PlayerBonusResponses() {
   const { gameState, gameConfig, getTeamColor } = useGame();
 
@@ -660,49 +592,49 @@ function PlayerBonusResponses() {
     for (const player of team.players) {
       if (player.type === 'ai') {
         const kwargs = player.extra_kwargs as { bonus_model: string };
-        if (kwargs.bonus_model === systemName) {
-          return player.name;
-        }
+        if (kwargs.bonus_model === systemName) return player.name;
       }
     }
     return systemName;
   };
 
   return (
-    <div className="bg-gray-800 rounded-xl p-4">
-      <h3 className="text-sm font-semibold text-gray-400 mb-3">AI Model Outputs</h3>
-      <div className="space-y-3">
+    <div className="bg-gray-800 rounded-xl p-3">
+      <div
+        className="text-xs font-semibold uppercase tracking-wide mb-3"
+        style={{ color: teamColor }}
+      >
+        AI Suggestion
+      </div>
+      <div className="space-y-2">
         {gameState.bonusResponses.map((response, idx) => {
           const confColor = getConfidenceColor(response.confidence);
           const playerName = getPlayerName(response.system);
+          const explanationText = response.explanation
+            ? truncateWords(response.explanation, BONUS_AI_EXPLANATION_MAX_WORDS)
+            : '';
 
           return (
-            <div
-              key={idx}
-              className="bg-gray-900 p-4 rounded-lg"
-            >
-              {/* Header: Player name and confidence */}
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-semibold" style={{ color: teamColor }}>
+            <div key={idx} className="bg-gray-900 p-3 rounded-lg">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="font-semibold text-sm" style={{ color: teamColor }}>
                   {playerName}
                 </span>
-                <span className="font-bold" style={{ color: confColor }}>
+                <span className="font-bold text-sm" style={{ color: confColor }}>
                   {Math.round(response.confidence * 100)}%
                 </span>
               </div>
-
-              {/* Guess */}
-              <div className="mb-2">
+              <div className="mb-1">
                 <span className="text-xs text-gray-500">Guess: </span>
-                <span className="text-blue-400 font-medium">{response.guess}</span>
+                <span className="text-blue-400 font-semibold text-base">
+                  {response.guess}
+                </span>
               </div>
-
-              {/* Full explanation */}
               {response.explanation && (
-                <div className="mt-2 pt-2 border-t border-gray-700">
+                <div className="mt-1.5 pt-1.5 border-t border-gray-700">
                   <div className="text-xs text-gray-500 mb-1">Explanation:</div>
-                  <div className="text-sm text-gray-300 font-mono whitespace-pre-wrap bg-gray-950 p-2 rounded max-h-32 overflow-y-auto">
-                    {response.explanation}
+                  <div className="text-xs text-gray-300 font-mono whitespace-pre-wrap bg-gray-950 p-2 rounded">
+                    {explanationText}
                   </div>
                 </div>
               )}
@@ -715,9 +647,9 @@ function PlayerBonusResponses() {
 }
 
 function getConfidenceColor(confidence: number): string {
-  if (confidence >= 0.9) return '#22c55e'; // Green
-  if (confidence >= 0.8) return '#84cc16'; // Lime
-  if (confidence >= 0.6) return '#eab308'; // Yellow
-  if (confidence >= 0.5) return '#f97316'; // Orange
-  return '#6b7280'; // Gray
+  if (confidence >= 0.9) return '#22c55e';
+  if (confidence >= 0.8) return '#84cc16';
+  if (confidence >= 0.6) return '#eab308';
+  if (confidence >= 0.5) return '#f97316';
+  return '#6b7280';
 }

@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useGame } from '../../context/GameContext';
+import {
+  MS_PER_SECOND,
+  REVEAL_LOCKOUT_SECONDS_DECIMALS,
+  REVEAL_LOCKOUT_TICK_INTERVAL_MS,
+} from '../../constants/time';
 
 /**
  * QuestionDisplay - Moderator's tossup question display
@@ -16,7 +21,7 @@ export function QuestionDisplay() {
 
   useEffect(() => {
     if (!gameState.revealLockoutUntilMs) return;
-    const interval = window.setInterval(() => setNowMs(Date.now()), 200);
+    const interval = window.setInterval(() => setNowMs(Date.now()), REVEAL_LOCKOUT_TICK_INTERVAL_MS);
     return () => window.clearInterval(interval);
   }, [gameState.revealLockoutUntilMs]);
 
@@ -26,7 +31,7 @@ export function QuestionDisplay() {
       ? Math.round((gameState.tokenIndex / gameState.totalTokens) * 100)
       : 0;
   const lockoutRemainingMs = Math.max(0, (gameState.revealLockoutUntilMs ?? 0) - nowMs);
-  const lockoutRemainingSec = (lockoutRemainingMs / 1000).toFixed(1);
+  const lockoutRemainingSec = (lockoutRemainingMs / MS_PER_SECOND).toFixed(REVEAL_LOCKOUT_SECONDS_DECIMALS);
 
   // Power indicator
   const isPowerPhase =
@@ -41,6 +46,10 @@ export function QuestionDisplay() {
         token.kind === 'text' || (token.kind === 'multimodal' && token.tokenType !== 'delay')
     );
   const revealedCount = gameState.tokenIndex;
+  // For moderator UX, treat the *current* spoken token as the highlighted one,
+  // and everything before it as fully revealed. This keeps moderator highlight
+  // in sync with what players see on their screen.
+  const currentTokenIndex = revealedCount > 0 ? revealedCount - 1 : -1;
   const lastRevealedImageToken = (() => {
     const start = Math.min(revealedCount, fullTokens.length) - 1;
     for (let i = start; i >= 0; i--) {
@@ -103,18 +112,18 @@ export function QuestionDisplay() {
           <p className="question-text leading-relaxed text-lg">
             {renderableTokens.length > 0 ? (
               renderableTokens.map(({ token, index }, displayIndex) => {
-                const isRevealed = index < revealedCount;
-                const isNextToken = index === revealedCount;
+                const isCurrentToken = index === currentTokenIndex;
+                const isPastToken = index < currentTokenIndex;
 
                 if (token.kind === 'text') {
                   return (
                     <span key={index} className="transition-colors duration-150">
                       <span
                         className={`${
-                          isRevealed
-                            ? 'text-gray-900 font-medium'
-                            : isNextToken
-                              ? 'text-gray-400 bg-yellow-50 px-1 rounded'
+                          isCurrentToken
+                            ? 'text-gray-900 font-semibold bg-yellow-50 px-1 rounded'
+                            : isPastToken
+                              ? 'text-gray-900 font-medium'
                               : 'text-gray-300'
                         }`}
                       >
@@ -126,21 +135,22 @@ export function QuestionDisplay() {
                 }
 
                 if (token.tokenType === 'audio') {
+                  const isRevealed = isPastToken || isCurrentToken;
                   return (
                     <span key={index} className="transition-colors duration-150">
                       <span
                         title={token.hash || ''}
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border ${
-                          isRevealed
-                            ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                            : isNextToken
-                              ? 'bg-yellow-50 text-emerald-600 border-yellow-200'
+                          isCurrentToken
+                            ? 'bg-yellow-50 text-emerald-700 border-yellow-200'
+                            : isPastToken
+                              ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
                               : 'bg-gray-100 text-gray-400 border-gray-200'
                         }`}
                       >
                         <button
                           type="button"
-                          disabled={!isRevealed}
+                          disabled={!isPastToken && !isCurrentToken}
                           onClick={() => playAudioToken(token.assetUrl)}
                           className={`h-4 w-4 rounded-full text-[10px] leading-none ${
                             isRevealed
@@ -163,10 +173,10 @@ export function QuestionDisplay() {
                     <span
                       title={token.hash || ''}
                       className={`px-2 py-0.5 rounded text-xs font-semibold border ${
-                        isRevealed
-                          ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
-                          : isNextToken
-                            ? 'bg-yellow-50 text-indigo-600 border-yellow-200'
+                        isCurrentToken
+                          ? 'bg-yellow-50 text-indigo-700 border-yellow-200'
+                          : isPastToken
+                            ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
                             : 'bg-gray-100 text-gray-400 border-gray-200'
                       }`}
                     >

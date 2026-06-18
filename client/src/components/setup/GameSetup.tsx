@@ -3,19 +3,25 @@ import { useGame } from '../../context/GameContext';
 import { TeamBuilder } from './TeamBuilder';
 import { FileUploader } from './FileUploader';
 import type { GameConfig, Team } from '../../../../shared/types';
+import {
+  DEFAULT_BONUS_PART_POINTS,
+  DEFAULT_ENABLE_POWER_POINTS,
+  DEFAULT_MULTIMODAL_REVEAL_LOCKOUT_SECONDS,
+  DEFAULT_POWER_POINTS_VALUE,
+  DEFAULT_STREAMING_SPEED_WPM,
+  DEFAULT_SUPPRESS_EARLY_AI_SECOND_BUZZES,
+  DEFAULT_TOSSUP_PENALTY_VALUE,
+  DEFAULT_TOSSUP_PENALTY_VALUE_SECOND_TEAM,
+  DEFAULT_TOSSUP_POINTS_VALUE,
+  STREAMING_SPEED_MAX_WPM,
+  STREAMING_SPEED_MIN_WPM,
+} from '../../constants/gameDefaults';
 
 type SetupStep = 'files' | 'teams' | 'settings' | 'review';
 
 const DEFAULT_TEAM_A: Team = {
   name: 'Team 1',
-  players: [
-    {
-      name: 'Human Player',
-      player_id: 'human1',
-      type: 'human',
-      extra_kwargs: { buzzer_key: '1' },
-    },
-  ],
+  players: [],
 };
 
 const DEFAULT_TEAM_B: Team = {
@@ -38,14 +44,14 @@ export function GameSetup() {
   });
   const [settings, setSettings] = useState({
     autoStream: false,
-    streamingSpeed: 200,
+    streamingSpeed: DEFAULT_STREAMING_SPEED_WPM,
     autoEvaluate: false,
-    enablePowerPoints: false,
-    powerPointsValue: 15,
-    defaultPointsValue: 10,
-    tossupPenaltyValue: 5,
-    bonusPartPoints: 10,
-    multimodalRevealLockoutSeconds: 5,
+    enablePowerPoints: DEFAULT_ENABLE_POWER_POINTS,
+    powerPointsValue: DEFAULT_POWER_POINTS_VALUE,
+    defaultPointsValue: DEFAULT_TOSSUP_POINTS_VALUE,
+    tossupPenaltyValue: DEFAULT_TOSSUP_PENALTY_VALUE,
+    bonusPartPoints: DEFAULT_BONUS_PART_POINTS,
+    multimodalRevealLockoutSeconds: DEFAULT_MULTIMODAL_REVEAL_LOCKOUT_SECONDS,
   });
 
   // When files change, try to load available models
@@ -111,12 +117,12 @@ export function GameSetup() {
       auto_stream: settings.autoStream,
       streaming_speed: settings.streamingSpeed,
       auto_evaluate: settings.autoEvaluate,
-      suppress_early_ai_second_buzzes: true,
+      suppress_early_ai_second_buzzes: DEFAULT_SUPPRESS_EARLY_AI_SECOND_BUZZES,
       enable_power_points: settings.enablePowerPoints,
       power_points_value: settings.powerPointsValue,
       default_points_value: settings.defaultPointsValue,
       tossup_penalty_value: settings.tossupPenaltyValue,
-      tossup_penalty_value_second_team: 0,
+      tossup_penalty_value_second_team: DEFAULT_TOSSUP_PENALTY_VALUE_SECOND_TEAM,
       bonus_part_points: settings.bonusPartPoints,
       multimodal_reveal_lockout_seconds: settings.multimodalRevealLockoutSeconds,
     };
@@ -170,13 +176,12 @@ export function GameSetup() {
               <button
                 key={s}
                 onClick={() => setStep(s)}
-                className={`flex-1 text-xs font-medium text-center transition-colors ${
-                  i === stepIndex
+                className={`flex-1 text-xs font-medium text-center transition-colors ${i === stepIndex
                     ? 'text-blue-700'
                     : i < stepIndex
                       ? 'text-blue-500 hover:text-blue-700'
                       : 'text-gray-400 hover:text-gray-600'
-                } cursor-pointer`}
+                  } cursor-pointer`}
               >
                 {STEP_LABELS[s]}
               </button>
@@ -187,13 +192,12 @@ export function GameSetup() {
               <div key={s} className="flex items-center">
                 <button
                   onClick={() => setStep(s)}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
-                    step === s
+                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${step === s
                       ? 'bg-blue-600 text-white'
                       : i < stepIndex
                         ? 'bg-blue-200 text-blue-700 hover:bg-blue-300'
                         : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-                  }`}
+                    }`}
                 >
                   {i + 1}
                 </button>
@@ -302,11 +306,11 @@ export function GameSetup() {
                       onChange={(e) =>
                         setSettings({
                           ...settings,
-                          streamingSpeed: parseInt(e.target.value) || 200,
+                          streamingSpeed: parseInt(e.target.value) || DEFAULT_STREAMING_SPEED_WPM,
                         })
                       }
-                      min={50}
-                      max={500}
+                      min={STREAMING_SPEED_MIN_WPM}
+                      max={STREAMING_SPEED_MAX_WPM}
                       className="input w-32"
                     />
                   </div>
@@ -340,7 +344,7 @@ export function GameSetup() {
                       onChange={(e) =>
                         setSettings({
                           ...settings,
-                          defaultPointsValue: parseInt(e.target.value) || 10,
+                          defaultPointsValue: parseInt(e.target.value) || DEFAULT_TOSSUP_POINTS_VALUE,
                         })
                       }
                       className="input"
@@ -354,7 +358,7 @@ export function GameSetup() {
                       onChange={(e) =>
                         setSettings({
                           ...settings,
-                          tossupPenaltyValue: parseInt(e.target.value) || 5,
+                          tossupPenaltyValue: parseInt(e.target.value) || DEFAULT_TOSSUP_PENALTY_VALUE,
                         })
                       }
                       className="input"
@@ -368,7 +372,7 @@ export function GameSetup() {
                       onChange={(e) =>
                         setSettings({
                           ...settings,
-                          bonusPartPoints: parseInt(e.target.value) || 10,
+                          bonusPartPoints: parseInt(e.target.value) || DEFAULT_BONUS_PART_POINTS,
                         })
                       }
                       className="input"
@@ -383,7 +387,10 @@ export function GameSetup() {
                       onChange={(e) =>
                         setSettings({
                           ...settings,
-                          multimodalRevealLockoutSeconds: Math.max(0, parseInt(e.target.value) || 5),
+                          multimodalRevealLockoutSeconds: Math.max(
+                            0,
+                            parseInt(e.target.value) || DEFAULT_MULTIMODAL_REVEAL_LOCKOUT_SECONDS
+                          ),
                         })
                       }
                       className="input"
