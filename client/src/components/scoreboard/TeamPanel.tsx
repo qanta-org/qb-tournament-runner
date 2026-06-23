@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useGame } from '../../context/GameContext';
 import { PlayerManagementDialog } from '../dialogs/PlayerManagementDialog';
 import { maxAiTossupPoints } from '../../utils/aiScoring';
+import { bonusConsultPoints } from '../../../../shared/scoring';
 import type {
   Team,
   TeamId,
@@ -49,6 +50,8 @@ export function TeamPanel({
   const humanPlayers = team.players.filter((p) => p.type === 'human');
   const aiPlayers = team.players.filter((p) => p.type === 'ai');
 
+  const consultPoints = gameConfig ? bonusConsultPoints(gameConfig, team.players) : null;
+
   const getMode = (playerId: string): AIBuzzMode => aiBuzzModes[playerId] ?? 'autonomous';
   const getK = (playerId: string): number => Math.max(1, aiAutonomousK[playerId] ?? 1);
 
@@ -60,9 +63,7 @@ export function TeamPanel({
     const buzzerKey =
       player.type === 'human'
         ? (player.extra_kwargs as { buzzer_key: string }).buzzer_key
-        : isSemi
-          ? (player.extra_kwargs as { buzzer_key?: string }).buzzer_key ?? null
-          : null;
+        : null;
     const weightClass =
       player.type === 'ai'
         ? (player.extra_kwargs as { weight_class?: AIWeightClass }).weight_class
@@ -78,7 +79,7 @@ export function TeamPanel({
         {/* Player type icon */}
         <span>{player.type === 'human' ? '👤' : '🤖'}</span>
 
-        {/* Buzzer key for humans and semi-auto AIs */}
+        {/* Buzzer key for humans */}
         {buzzerKey && (
           <span className="px-1.5 py-0.5 bg-gray-200 rounded text-xs font-mono">
             {buzzerKey}
@@ -139,6 +140,18 @@ export function TeamPanel({
             {humanPlayers.map(renderPlayer)}
             {aiPlayers.map(renderPlayer)}
           </div>
+
+          {/* Per-team bonus consult cap (team aggregate, not per-agent) */}
+          {aiPlayers.length > 0 && consultPoints !== null && (
+            <div className="mt-1.5">
+              <span
+                className="px-1.5 py-0.5 rounded text-sm font-semibold bg-blue-100 text-blue-700"
+                title="Points per bonus part if this team consults its AI"
+              >
+                Bonus consult: +{consultPoints} / part
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Score */}
@@ -164,20 +177,12 @@ export function TeamPanel({
             <div className="space-y-2">
               {aiPlayers.map((player) => {
                 const mode = getMode(player.player_id);
-                const semiKey = (player.extra_kwargs as { buzzer_key?: string }).buzzer_key;
                 const k = getK(player.player_id);
                 return (
                   <div key={player.player_id} className="flex items-center gap-2">
                     <span className="text-xs truncate flex-1" title={player.name}>
                       {player.name}
                     </span>
-
-                    {/* Semi-autonomous buzzer key (shown left of the selector) */}
-                    {mode === 'semi' && semiKey && (
-                      <span className="px-1.5 py-0.5 bg-gray-200 rounded text-xs font-mono">
-                        {semiKey}
-                      </span>
-                    )}
 
                     {/* Autonomous "buzz after k tokens" selector (only in Auto mode) */}
                     {mode === 'autonomous' && (

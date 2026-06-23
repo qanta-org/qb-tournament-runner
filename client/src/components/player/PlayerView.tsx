@@ -4,6 +4,7 @@ import type { Team, TeamId, Player, TossupResponse, AIBuzzMode } from '../../../
 import { BONUS_AI_EXPLANATION_MAX_WORDS } from '../../constants/playerView';
 import { truncateWords } from '../../utils/text';
 import { maxAiTossupPoints } from '../../utils/aiScoring';
+import { bonusConsultPoints } from '../../../../shared/scoring';
 import {
   MS_PER_SECOND,
   REVEAL_LOCKOUT_SECONDS_DECIMALS,
@@ -345,6 +346,8 @@ function PlayerTeamPanel({
   const humanPlayers = team.players.filter((p) => p.type === 'human');
   const aiPlayers = team.players.filter((p) => p.type === 'ai');
 
+  const consultPoints = gameConfig ? bonusConsultPoints(gameConfig, team.players) : null;
+
   const renderPlayer = (player: Player) => {
     const mode = player.type === 'ai' ? aiBuzzModes[player.player_id] ?? 'autonomous' : 'autonomous';
     const isMuted = player.type === 'ai' && mode === 'muted';
@@ -353,9 +356,7 @@ function PlayerTeamPanel({
     const buzzerKey =
       player.type === 'human'
         ? (player.extra_kwargs as { buzzer_key: string }).buzzer_key
-        : isSemi
-          ? (player.extra_kwargs as { buzzer_key?: string }).buzzer_key ?? null
-          : null;
+        : null;
     const maxPoints =
       player.type === 'ai' && gameConfig ? maxAiTossupPoints(gameConfig, player) : null;
 
@@ -413,6 +414,18 @@ function PlayerTeamPanel({
         )}
         {aiPlayers.map(renderPlayer)}
       </div>
+
+      {/* Per-team bonus consult cap (team aggregate, not per-agent) */}
+      {aiPlayers.length > 0 && consultPoints !== null && (
+        <div className="mt-1.5">
+          <span
+            className="pv-points-badge"
+            title="Points per bonus part if this team consults its AI"
+          >
+            Bonus consult: +{consultPoints} / part
+          </span>
+        </div>
+      )}
     </div>
   );
 }

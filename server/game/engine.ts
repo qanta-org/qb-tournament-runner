@@ -22,10 +22,6 @@ import { createInitialGameState } from '../../shared/types.js';
 import { Questions } from '../data/questions.js';
 import { Buzzes } from '../data/buzzes.js';
 
-// Keyboard keys assigned to AI players for semi-autonomous (human-triggered) buzzing.
-// Kept distinct from the human buzzer keys (1-9) to avoid collisions.
-const AI_BUZZER_KEY_POOL = ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'Z', 'X', 'C', 'V', 'B', 'N'];
-
 type StateUpdateCallback = (state: GameState) => void;
 
 /**
@@ -156,48 +152,6 @@ export class GameEngine {
 
     setupTeam('team_a', this.config.team_a);
     setupTeam('team_b', this.config.team_b);
-
-    // Assign keyboard keys to AI players (used for semi-autonomous human-triggered buzzing).
-    // Authoritative, global assignment so keys never collide across teams or with humans.
-    this.assignAiBuzzerKeys();
-  }
-
-  /**
-   * Backfill a unique buzzer key for every AI player from a distinct key pool.
-   * Mutates the shared config so the assigned keys are emitted to clients.
-   */
-  private assignAiBuzzerKeys(): void {
-    const usedKeys = new Set<string>(this.buzzerKeyToPlayerId.keys());
-    let poolIndex = 0;
-
-    const aiPlayers = [
-      ...this.config.team_a.players.filter((p) => p.type === 'ai'),
-      ...this.config.team_b.players.filter((p) => p.type === 'ai'),
-    ];
-
-    for (const player of aiPlayers) {
-      const kwargs = player.extra_kwargs as { buzzer_key?: string };
-      const existing = kwargs.buzzer_key?.toUpperCase();
-      if (existing && !usedKeys.has(existing)) {
-        usedKeys.add(existing);
-        this.buzzerKeyToPlayerId.set(existing, player.player_id);
-        continue;
-      }
-
-      // Find the next free key in the pool
-      while (poolIndex < AI_BUZZER_KEY_POOL.length && usedKeys.has(AI_BUZZER_KEY_POOL[poolIndex])) {
-        poolIndex++;
-      }
-      if (poolIndex >= AI_BUZZER_KEY_POOL.length) {
-        // Ran out of keys; leave this AI without a semi-auto key.
-        continue;
-      }
-      const key = AI_BUZZER_KEY_POOL[poolIndex];
-      poolIndex++;
-      usedKeys.add(key);
-      kwargs.buzzer_key = key;
-      this.buzzerKeyToPlayerId.set(key, player.player_id);
-    }
   }
 
   /** Resolve the buzz mode for an AI player (absent => autonomous). */
@@ -523,11 +477,9 @@ export class GameEngine {
       const mode = this.getAiBuzzMode(playerId);
       // Muted AIs never buzz; semi-autonomous AIs only buzz when a human triggers them.
       if (mode === 'muted' || mode === 'semi') continue;
-      // Autonomous AIs cannot buzz before their own k-th token is revealed.
-      if (mode === 'autonomous') {
-        const k = this.getAiAutonomousK(playerId);
-        if (currentPosition < k - 1) continue;
-      }
+      // Autonomous AIs cannot buzz before their k-th token is revealed (gate >= k).
+      const k = this.getAiAutonomousK(playerId);
+      if (currentPosition < k) continue;
 
       // Skip if team already buzzed
       if (this.state.teamBuzzed[playerTeam]) continue;
@@ -540,8 +492,12 @@ export class GameEngine {
         }
       }
 
-      // Check if should buzz
-      if (guess.buzz || (this.state.teamBuzzed[otherTeam] && isLastWord)) {
+      // Discard early buzzes: a buzz decision made before token k does not count
+      // (a guess held over from before the gate cannot trigger a buzz). The forced
+      // second-team buzz on the last word is exempt and uses the latest guess.
+      const buzzedAtOrAfterK =
+        !!guess.buzz && guess.token_position !== undefined && guess.token_position >= k;
+      if (buzzedAtOrAfterK || (this.state.teamBuzzed[otherTeam] && isLastWord)) {
         validBuzzes.push([system, guess]);
       }
     }
@@ -622,38 +578,47 @@ export class GameEngine {
   }
 
   /**
-   * Handle a human-triggered buzz on behalf of a semi-autonomous AI (QANTA 2026).
-   * Uses the AI's most recent guess at the current position, even if buzz === 0.
+   * After a buzz, reassign who actually answers (QANTA 2026).
+   *
+   * During answer review the moderator can either keep the human who buzzed, or
+   * delegate the answer to a same-team semi-autonomous AI. Delegating to an AI
+   * makes it the buzzing player, so the existing ruling logic scores it as an AI
+   * buzz (weight-class deflated). The target must be on the same team as the
+   * player who originally buzzed (the team that owns the buzz).
    */
-  handleAIManualBuzz(playerId: string): { buzzed: boolean } {
-    if (this.state.phase !== 'tossup_streaming') return { buzzed: false };
+  setBuzzSource(playerId: string): { changed: boolean } {
+    if (this.state.phase !== 'answer_review' || !this.state.buzzingPlayer) {
+      return { changed: false };
+    }
 
-    const player = this.players.get(playerId);
-    const playerTeam = this.teamAssignment.get(playerId);
-    if (!player || player.type !== 'ai' || !playerTeam) return { buzzed: false };
+    const currentTeam = this.teamAssignment.get(this.state.buzzingPlayer);
+    const target = this.players.get(playerId);
+    const targetTeam = this.teamAssignment.get(playerId);
+    if (!target || !targetTeam || targetTeam !== currentTeam) {
+      return { changed: false };
+    }
 
-    // Only valid for AIs explicitly set to semi-autonomous mode.
-    if (this.getAiBuzzMode(playerId) !== 'semi') return { buzzed: false };
+    if (target.type === 'ai') {
+      // Only AIs explicitly in semi-autonomous mode may be delegated to.
+      if (this.getAiBuzzMode(playerId) !== 'semi') return { changed: false };
 
-    // Team must not have already buzzed, and the tossup must still be live.
-    if (this.state.teamBuzzed[playerTeam]) return { buzzed: false };
-    if (!this.tossupInProgress()) return { buzzed: false };
+      const kwargs = target.extra_kwargs as { tossup_model: string };
+      // Latest guess at or before the current revealed position (even if buzz === 0).
+      const position = Math.max(0, this.state.tokenIndex - 1);
+      const guesses = this.buzzes.getTossupGuesses(this.state.currentTossupId!, position);
+      const guess = guesses.get(kwargs.tossup_model);
 
-    const kwargs = player.extra_kwargs as { tossup_model: string };
-    // Latest guess at or before the current revealed position (use it even if buzz === 0).
-    const position = Math.max(0, this.state.tokenIndex - 1);
-    const guesses = this.buzzes.getTossupGuesses(this.state.currentTossupId!, position);
-    const guess = guesses.get(kwargs.tossup_model);
+      this.state.buzzingPlayer = playerId;
+      this.state.currentGuesses = Array.from(guesses.values());
+      this.state.buzzingPlayerGuess = guess ? guess.guess : '';
+    } else {
+      // Back to a human answerer; the moderator enters the guess later.
+      this.state.buzzingPlayer = playerId;
+      this.state.buzzingPlayerGuess = null;
+    }
 
-    this.state.buzzingPlayer = playerId;
-    this.state.currentGuesses = Array.from(guesses.values());
-    this.state.teamBuzzed[playerTeam] = true;
-    this.state.buzzingPlayerGuess = guess ? guess.guess : '';
-    this.state.phase = 'answer_review';
-
-    this.stopAutoStream();
     this.emitState();
-    return { buzzed: true };
+    return { changed: true };
   }
 
   /**

@@ -4,7 +4,9 @@ dist/
 
 # Data
 data_prev/
-data/
+/data/
+hf_datasets/
+__pycache__/
 
 # Runs
 runs/

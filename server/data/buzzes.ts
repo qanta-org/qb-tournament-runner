@@ -144,6 +144,7 @@ export class Buzzes {
       guess,
       confidence,
       buzz,
+      token_position: tokenPosition,
     });
   }
 

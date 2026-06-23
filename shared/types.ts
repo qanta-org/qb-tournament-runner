@@ -194,6 +194,7 @@ export interface TossupResponse {
   guess: string;
   confidence: number;
   buzz: number; // 1 if should buzz, 0 otherwise
+  token_position?: number; // token at which this guess/buzz was produced
 }
 
 export interface BonusResponse {
@@ -523,8 +524,9 @@ export interface ClientToServerEvents {
   'moderator:set_ai_buzz_mode': (data: { playerId: string; mode: AIBuzzMode }) => void;
   // QANTA 2026: update a single AI's "autonomous after k tokens" threshold live
   'moderator:set_autonomous_k': (data: { playerId: string; k: number }) => void;
-  // QANTA 2026: human buzzes on behalf of a semi-autonomous AI
-  'moderator:ai_buzz': (playerId: string) => void;
+  // QANTA 2026: after a buzz, reassign who answers (the human who buzzed, or a
+  // same-team semi-autonomous AI delegated to by the moderator)
+  'moderator:set_buzz_source': (playerId: string) => void;
   // Mid-game player management
   'moderator:add_player': (
     data: { teamId: TeamId; player: Player },

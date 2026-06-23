@@ -326,14 +326,14 @@ export function setupGameHandlers(
     if (engine) engine.setAutonomousK(data.playerId, data.k);
   });
 
-  socket.on('moderator:ai_buzz', (playerId: string) => {
+  socket.on('moderator:set_buzz_source', (playerId: string) => {
     if (!roomManager.isModerator(socket.id)) return;
 
     const room = roomManager.getRoomForSocket(socket.id);
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) engine.handleAIManualBuzz(playerId);
+    if (engine) engine.setBuzzSource(playerId);
   });
 
   socket.on('bonus:advance', () => {

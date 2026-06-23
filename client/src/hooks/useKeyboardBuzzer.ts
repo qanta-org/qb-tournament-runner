@@ -5,7 +5,7 @@ import { useGame } from '../context/GameContext';
  * Hook that handles keyboard-based buzzing and navigation
  */
 export function useKeyboardBuzzer() {
-  const { gameState, gameConfig, buzz, aiManualBuzz, nextWord, advanceBonusStage, advanceBonusPart } = useGame();
+  const { gameState, gameConfig, buzz, nextWord, advanceBonusStage, advanceBonusPart } = useGame();
 
   // Build buzzer key map from human players
   const buzzerKeyMap = useCallback((): Record<string, string> => {
@@ -30,30 +30,10 @@ export function useKeyboardBuzzer() {
     return map;
   }, [gameConfig]);
 
-  // Build buzzer key map for AIs currently in semi-autonomous mode
-  const aiBuzzerKeyMap = useCallback((): Record<string, string> => {
-    if (!gameConfig) return {};
-
-    const map: Record<string, string> = {};
-    const allPlayers = [...gameConfig.team_a.players, ...gameConfig.team_b.players];
-
-    for (const player of allPlayers) {
-      if (player.type !== 'ai') continue;
-      if ((gameState.aiBuzzModes[player.player_id] ?? 'autonomous') !== 'semi') continue;
-      const kwargs = player.extra_kwargs as { buzzer_key?: string };
-      if (kwargs.buzzer_key) {
-        map[kwargs.buzzer_key.toUpperCase()] = player.player_id;
-      }
-    }
-
-    return map;
-  }, [gameConfig, gameState.aiBuzzModes]);
-
   useEffect(() => {
     if (!gameConfig) return;
 
     const keyMap = buzzerKeyMap();
-    const aiKeyMap = aiBuzzerKeyMap();
     const isTossupPhase = ['tossup_ready', 'tossup_streaming'].includes(gameState.phase);
     const isBonusLeadin = gameState.phase === 'bonus_leadin';
     const isBonusPartReveal = gameState.phase === 'bonus_part_reveal';
@@ -78,18 +58,6 @@ export function useKeyboardBuzzer() {
         const playerTeam = getPlayerTeam(playerId, gameConfig);
         if (playerTeam && !gameState.teamBuzzed[playerTeam]) {
           buzz(playerId);
-        }
-        return;
-      }
-
-      // Handle semi-autonomous AI keys during tossup (human buzzes on AI's behalf)
-      if (isTossupPhase && aiKeyMap[key]) {
-        e.preventDefault();
-        const playerId = aiKeyMap[key];
-
-        const playerTeam = getPlayerTeam(playerId, gameConfig);
-        if (playerTeam && !gameState.teamBuzzed[playerTeam]) {
-          aiManualBuzz(playerId);
         }
         return;
       }
@@ -131,11 +99,8 @@ export function useKeyboardBuzzer() {
     gameState.bonusStage,
     gameState.teamBuzzed,
     gameState.revealLockoutUntilMs,
-    gameState.aiBuzzModes,
     buzzerKeyMap,
-    aiBuzzerKeyMap,
     buzz,
-    aiManualBuzz,
     nextWord,
     advanceBonusStage,
     advanceBonusPart,

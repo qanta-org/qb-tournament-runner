@@ -196,7 +196,7 @@
   }
 
   .pv-points-badge {
-    @apply px-1 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700;
+    @apply px-1.5 py-0.5 rounded text-sm font-semibold bg-blue-100 text-blue-700;
   }
 
   .pv-token-audio {

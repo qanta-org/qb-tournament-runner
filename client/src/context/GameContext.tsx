@@ -49,7 +49,7 @@ interface GameContextValue {
   submitAnswerRuling: (ruling: AnswerRuling, answer: string) => void;
   adjustPoints: (adjustments: { team_a: number; team_b: number }) => void;
   setAiBuzzMode: (playerId: string, mode: AIBuzzMode) => void;
-  aiManualBuzz: (playerId: string) => void;
+  setBuzzSource: (playerId: string) => void;
   setAutonomousK: (playerId: string, k: number) => void;
   advanceBonusStage: () => void;
   advanceBonusPart: () => void;
@@ -254,8 +254,8 @@ export function GameProvider({ children }: GameProviderProps) {
     socket.emit('moderator:set_autonomous_k', { playerId, k });
   }, []);
 
-  const aiManualBuzz = useCallback((playerId: string) => {
-    socket.emit('moderator:ai_buzz', playerId);
+  const setBuzzSource = useCallback((playerId: string) => {
+    socket.emit('moderator:set_buzz_source', playerId);
   }, []);
 
   const advanceBonusStage = useCallback(() => {
@@ -373,7 +373,7 @@ export function GameProvider({ children }: GameProviderProps) {
     submitAnswerRuling,
     adjustPoints,
     setAiBuzzMode,
-    aiManualBuzz,
+    setBuzzSource,
     setAutonomousK,
     advanceBonusStage,
     advanceBonusPart,

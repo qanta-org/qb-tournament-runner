@@ -1,0 +1,104 @@
+model,source,input_price,output_price,total_params_b,active_params_b,context_length,release_year,has_vision,is_specialty
+Meta: Llama 3.2 1B Instruct,openrouter,0.027,0.201,1.0,1.0,131072,2024,0,0
+LiquidAI: LFM2-24B-A2B,openrouter,0.03,0.12,24.0,2.0,128000,2026,0,0
+Qwen: Qwen3.6 35B A3B,openrouter,0.14,1.0,35.0,3.0,262144,2026,1,0
+Qwen: Qwen3.5-35B-A3B,openrouter,0.139,1.0,35.0,3.0,262144,2026,1,0
+NVIDIA: Nemotron 3 Nano 30B A3B,openrouter,0.05,0.2,30.0,3.0,262144,2025,0,0
+Mistral: Ministral 3 3B 2512,openrouter,0.1,0.1,3.0,3.0,131072,2025,1,0
+Qwen: Qwen3 VL 30B A3B Thinking,openrouter,0.13,1.56,30.0,3.0,131072,2025,1,0
+Qwen: Qwen3 VL 30B A3B Instruct,openrouter,0.13,0.52,30.0,3.0,262144,2025,1,0
+Qwen: Qwen3 Next 80B A3B Thinking,openrouter,0.0975,0.78,80.0,3.0,262144,2025,0,0
+Qwen: Qwen3 Next 80B A3B Instruct,openrouter,0.09,1.1,80.0,3.0,262144,2025,0,0
+Qwen: Qwen3 30B A3B Thinking 2507,openrouter,0.08,0.4,30.0,3.0,131072,2025,0,0
+Qwen: Qwen3 Coder 30B A3B Instruct,openrouter,0.07,0.27,30.0,3.0,160000,2025,0,0
+Qwen: Qwen3 30B A3B Instruct 2507,openrouter,0.09,0.3,30.0,3.0,262144,2025,0,0
+Qwen: Qwen3 30B A3B,openrouter,0.09,0.45,30.0,3.0,131072,2025,0,0
+Meta: Llama 3.2 3B Instruct,openrouter,0.0509,0.335,3.0,3.0,131072,2024,0,0
+IBM: Granite 4.0 Micro,openrouter,0.017,0.112,3.3,3.3,131000,2025,0,0
+GPT OSS 20B 128k,groq,0.075,0.3,20.0,3.6,131072,2025,0,0
+GPT OSS Safeguard 20B,groq,0.075,0.3,20.0,3.6,131072,2025,0,0
+Google: Gemma 4 26B A4B ,openrouter,0.06,0.33,26.0,4.0,262144,2026,1,0
+Google: Gemma 3n 4B,openrouter,0.06,0.12,4.0,4.0,32768,2025,0,0
+Google: Gemma 3 4B,openrouter,0.04,0.08,4.0,4.0,131072,2025,1,0
+GPT OSS 120B 128k,groq,0.15,0.6,120.0,5.1,131072,2025,0,0
+AlfredPros: CodeLLaMa 7B Instruct Solidity,openrouter,0.8,1.2,7.0,7.0,4096,2025,0,1
+Cohere: Command R7B (12-2024),openrouter,0.0375,0.15,7.0,7.0,128000,2024,0,0
+Qwen: Qwen2.5 7B Instruct,openrouter,0.04,0.1,7.0,7.0,131072,2024,0,0
+Mistral: Mistral 7B Instruct v0.1,openrouter,0.11,0.19,7.0,7.0,4096,2023,0,0
+Llama 3.1 8B Instant 128k,groq,0.05,0.08,8.0,8.0,131072,2024,0,0
+IBM: Granite 4.1 8B,openrouter,0.05,0.1,8.0,8.0,131072,2026,0,0
+Mistral: Ministral 3 8B 2512,openrouter,0.15,0.15,8.0,8.0,262144,2025,1,0
+Qwen: Qwen3 VL 8B Thinking,openrouter,0.117,1.365,8.0,8.0,256000,2025,1,0
+Qwen: Qwen3 VL 8B Instruct,openrouter,0.08,0.5,8.0,8.0,256000,2025,1,0
+NVIDIA: Nemotron Nano 9B V2,openrouter,0.04,0.16,8.0,8.0,131072,2025,0,0
+Qwen: Qwen3 8B,openrouter,0.05,0.4,8.0,8.0,131072,2025,0,0
+Llama Guard 3 8B,openrouter,0.484,0.03,8.0,8.0,131072,2025,0,1
+AionLabs: Aion-RP 1.0 (8B),openrouter,0.8,1.6,8.0,8.0,32768,2025,0,1
+Meta: Llama 3.1 8B Instruct,openrouter,0.02,0.05,8.0,8.0,131072,2024,0,0
+NousResearch: Hermes 2 Pro - Llama-3 8B,openrouter,0.14,0.14,8.0,8.0,8192,2024,0,0
+Meta: Llama 3 8B Instruct,openrouter,0.04,0.04,8.0,8.0,8192,2024,0,0
+Qwen: Qwen3.5-9B,openrouter,0.04,0.15,9.0,9.0,262144,2026,1,0
+Qwen: Qwen3.5-122B-A10B,openrouter,0.26,2.08,122.0,10.0,262144,2026,1,0
+Meta: Llama 3.2 11B Vision Instruct,openrouter,0.245,0.245,11.0,11.0,131072,2024,1,0
+NVIDIA: Nemotron 3 Super,openrouter,0.09,0.45,120.0,12.0,1000000,2026,0,0
+Meta: Llama Guard 4 12B,openrouter,0.18,0.18,12.0,12.0,163840,2025,1,1
+Google: Gemma 3 12B,openrouter,0.04,0.13,12.0,12.0,131072,2025,1,0
+TheDrummer: UnslopNemo 12B,openrouter,0.4,0.4,12.0,12.0,32768,2024,0,0
+Mistral: Mistral Nemo,openrouter,0.02,0.03,12.0,12.0,131072,2024,0,0
+Mistral: Ministral 3 14B 2512,openrouter,0.2,0.2,14.0,14.0,262144,2025,1,0
+Microsoft: Phi 4 Mini Instruct,openrouter,0.08,0.35,14.0,14.0,131072,2025,0,0
+Qwen: Qwen3 14B,openrouter,0.1,0.24,14.0,14.0,131702,2025,0,0
+Microsoft: Phi 4,openrouter,0.065,0.14,14.0,14.0,16384,2025,0,0
+Llama 4 Scout (17Bx16E) 128k,groq,0.11,0.34,109.0,17.0,131072,2025,1,0
+Qwen: Qwen3.5 397B A17B,openrouter,0.39,2.34,397.0,17.0,262144,2026,1,0
+Meta: Llama 4 Maverick,openrouter,0.15,0.6,400.0,17.0,1048576,2025,1,0
+Meta: Llama 4 Scout,openrouter,0.08,0.3,109.0,17.0,10000000,2025,1,0
+Mistral: Mistral Small 4,openrouter,0.15,0.6,22.0,22.0,262144,2026,1,0
+Qwen: Qwen3 VL 235B A22B Thinking,openrouter,0.26,2.6,235.0,22.0,131072,2025,1,0
+Qwen: Qwen3 VL 235B A22B Instruct,openrouter,0.2,0.88,235.0,22.0,262144,2025,1,0
+Mistral: Codestral 2508,openrouter,0.3,0.9,22.0,22.0,256000,2025,0,0
+Qwen: Qwen3 235B A22B Thinking 2507,openrouter,0.1495,1.495,235.0,22.0,262144,2025,0,0
+Qwen: Qwen3 235B A22B Instruct 2507,openrouter,0.071,0.1,235.0,22.0,262144,2025,0,0
+Mistral: Mistral Small 3.2 24B,openrouter,0.075,0.2,22.0,22.0,128000,2025,1,0
+Qwen: Qwen3 235B A22B,openrouter,0.455,1.82,235.0,22.0,131072,2025,0,0
+Mistral: Mistral Small 3.1 24B,openrouter,0.351,0.555,22.0,22.0,128000,2025,1,0
+Mistral: Mistral Small 3,openrouter,0.05,0.08,22.0,22.0,32768,2025,0,0
+WizardLM-2 8x22B,openrouter,0.62,0.62,22.0,22.0,65536,2024,0,1
+Mistral: Voxtral Small 24B 2507,openrouter,0.1,0.3,24.0,24.0,32000,2025,0,0
+Qwen: Qwen3.6 27B,openrouter,0.29,3.2,27.0,27.0,262144,2026,1,0
+Qwen: Qwen3.5-27B,openrouter,0.195,1.56,27.0,27.0,262144,2026,1,0
+Google: Gemma 3 27B,openrouter,0.08,0.16,27.0,27.0,131072,2025,1,0
+Google: Gemma 2 27B,openrouter,0.65,0.65,27.0,27.0,8192,2024,0,0
+Google: Gemma 4 31B,openrouter,0.12,0.37,31.0,31.0,262144,2026,1,0
+Qwen3 32B 131k,groq,0.29,0.59,32.0,32.0,134144,2025,0,0
+AllenAI: Olmo 3 32B Think,openrouter,0.15,0.5,32.0,32.0,65536,2025,0,0
+Qwen: Qwen3 VL 32B Instruct,openrouter,0.104,0.416,32.0,32.0,262144,2025,1,0
+Qwen: Qwen3 32B,openrouter,0.08,0.28,32.0,32.0,131072,2025,0,0
+DeepSeek: R1 Distill Qwen 32B,openrouter,0.29,0.29,32.0,32.0,128000,2025,0,0
+Qwen2.5 Coder 32B Instruct,openrouter,0.66,1.0,32.0,32.0,128000,2024,0,0
+Cohere: Command R (08-2024),openrouter,0.15,0.6,35.0,35.0,128000,2024,0,0
+DeepSeek: DeepSeek V4 Pro,openrouter,0.435,0.87,671.0,37.0,1048576,2026,0,0
+DeepSeek: DeepSeek V4 Flash,openrouter,0.0983,0.1966,671.0,37.0,1048576,2026,0,0
+Nex AGI: DeepSeek V3.1 Nex N1,openrouter,0.135,0.5,671.0,37.0,131072,2025,0,0
+DeepSeek: DeepSeek V3.2,openrouter,0.252,0.378,671.0,37.0,131072,2025,0,0
+DeepSeek: DeepSeek V3.2 Exp,openrouter,0.27,0.41,671.0,37.0,163840,2025,0,0
+DeepSeek: DeepSeek V3.1 Terminus,openrouter,0.27,0.95,671.0,37.0,163840,2025,0,0
+Mistral: Mixtral 8x22B Instruct,openrouter,2.0,6.0,141.0,39.0,65536,2024,0,0
+NVIDIA: Llama 3.3 Nemotron Super 49B V1.5,openrouter,0.1,0.4,49.0,49.0,131072,2025,0,0
+Llama 3.3 70B Versatile 128k,groq,0.59,0.79,70.0,70.0,131072,2024,0,0
+Nous: Hermes 4 70B,openrouter,0.13,0.4,70.0,70.0,131072,2025,0,0
+DeepSeek: R1 Distill Llama 70B,openrouter,0.7,0.8,70.0,70.0,131072,2025,0,0
+Meta: Llama 3.3 70B Instruct,openrouter,0.1,0.32,70.0,70.0,131072,2024,0,0
+Nous: Hermes 3 70B Instruct,openrouter,0.3,0.3,70.0,70.0,131072,2024,0,0
+Meta: Llama 3.1 70B Instruct,openrouter,0.4,0.4,70.0,70.0,131072,2024,0,0
+Meta: Llama 3 70B Instruct,openrouter,0.51,0.74,70.0,70.0,8192,2024,0,0
+Qwen: Qwen2.5 VL 72B Instruct,openrouter,0.25,0.75,72.0,72.0,131072,2025,1,0
+Qwen2.5 72B Instruct,openrouter,0.36,0.4,72.0,72.0,131072,2024,0,0
+Cohere: Command R+ (08-2024),openrouter,2.5,10.0,104.0,104.0,128000,2024,0,0
+Mistral: Mistral Large 3 2512,openrouter,0.5,1.5,123.0,123.0,262144,2025,1,0
+Mistral Large 2411,openrouter,2.0,6.0,123.0,123.0,131072,2024,0,0
+Mistral Large 2407,openrouter,2.0,6.0,123.0,123.0,131072,2024,0,0
+Mistral Large,openrouter,2.0,6.0,123.0,123.0,128000,2024,0,0
+Mistral: Pixtral Large 2411,openrouter,2.0,6.0,124.0,124.0,131072,2024,1,0
+Nous: Hermes 4 405B,openrouter,1.0,3.0,405.0,405.0,131072,2025,0,0
+Nous: Hermes 3 405B Instruct,openrouter,1.0,1.0,405.0,405.0,131072,2024,0,0

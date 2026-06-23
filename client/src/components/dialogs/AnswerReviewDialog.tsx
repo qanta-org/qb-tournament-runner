@@ -1,9 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useGame } from '../../context/GameContext';
+import type { AIBuzzMode } from '../../../../shared/types';
+import { aiTossupPoints } from '../../../../shared/scoring';
 
 export function AnswerReviewDialog() {
-  const { gameState, gameConfig, submitAnswerRuling, getPlayer, getTeamColor } = useGame();
+  const { gameState, gameConfig, submitAnswerRuling, setBuzzSource, getPlayer, getTeamColor } = useGame();
   const [answer, setAnswer] = useState('');
+  // Remember the human who originally buzzed so the moderator can undo a
+  // delegation (switch the answer source back to that human).
+  const [humanBuzzerId, setHumanBuzzerId] = useState<string | null>(null);
 
   // Get buzzing player info
   const buzzingPlayerId = gameState.buzzingPlayer;
@@ -37,6 +42,36 @@ export function AnswerReviewDialog() {
     }
   }, [aiGuess]);
 
+  // Track the human who buzzed (before any delegation) so we can switch back.
+  useEffect(() => {
+    if (buzzingPlayer?.type === 'human' && buzzingPlayerId) {
+      setHumanBuzzerId(buzzingPlayerId);
+    }
+  }, [buzzingPlayer, buzzingPlayerId]);
+
+  // Same-team semi-autonomous AIs the moderator can delegate the answer to.
+  const teamPlayers = playerTeam
+    ? playerTeam === 'team_a'
+      ? gameConfig?.team_a.players ?? []
+      : gameConfig?.team_b.players ?? []
+    : [];
+  const delegableAis = teamPlayers.filter(
+    (p) =>
+      p.type === 'ai' &&
+      ((gameState.aiBuzzModes[p.player_id] ?? 'autonomous') as AIBuzzMode) === 'semi'
+  );
+
+  const handleDelegateToAi = (aiPlayerId: string) => {
+    setBuzzSource(aiPlayerId);
+  };
+
+  const handleBackToHuman = () => {
+    if (humanBuzzerId) {
+      setAnswer('');
+      setBuzzSource(humanBuzzerId);
+    }
+  };
+
   const handleAccept = () => {
     const finalAnswer = answer.trim() || aiGuess;
     submitAnswerRuling('accept', finalAnswer);
@@ -61,6 +96,11 @@ export function AnswerReviewDialog() {
       // Don't capture if typing in the input
       if (e.target instanceof HTMLInputElement) return;
 
+      // While a human is the answerer, require a typed answer before ruling
+      // (the moderator may still be deciding whether to delegate to an AI).
+      const currentIsHuman = buzzingPlayer?.type === 'human';
+      if (currentIsHuman && !answer.trim()) return;
+
       if (e.key === '=' || e.key === '+') {
         e.preventDefault();
         const finalAnswer = answer.trim() || aiGuess;
@@ -80,7 +120,7 @@ export function AnswerReviewDialog() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [answer, aiGuess, gameConfig, submitAnswerRuling]);
+  }, [answer, aiGuess, gameConfig, submitAnswerRuling, buzzingPlayer]);
 
   if (!buzzingPlayer || !gameConfig) return null;
 
@@ -89,6 +129,11 @@ export function AnswerReviewDialog() {
   const penaltyValue = playerTeam && gameState.teamBuzzed[otherTeam]
     ? gameConfig.tossup_penalty_value_second_team
     : gameConfig.tossup_penalty_value;
+  // Points awarded if correct. For an AI answerer (including a human-delegated
+  // semi AI), apply the same weight-class deflation the server uses on accept.
+  const correctPoints = isHuman
+    ? gameState.tossupPointsValue
+    : aiTossupPoints(gameConfig, gameState.tossupPointsValue, buzzingPlayer);
 
   return (
     <div className="modal-overlay">
@@ -123,10 +168,42 @@ export function AnswerReviewDialog() {
             // AI player - show the answer
             <div className="bg-blue-50 p-3 rounded-lg text-center">
               <p className="text-xs text-gray-500 mb-1">AI Response:</p>
-              <p className="text-lg font-semibold text-blue-600">{aiGuess}</p>
+              <p className="text-lg font-semibold text-blue-600">{aiGuess || '(no guess available)'}</p>
             </div>
           )}
         </div>
+
+        {/* Delegate to a same-team semi-autonomous AI (when a human buzzed) */}
+        {isHuman && delegableAis.length > 0 && (
+          <div className="mb-4 border border-dashed border-gray-300 rounded-lg p-3">
+            <p className="text-xs text-gray-500 mb-2 text-center">
+              Or delegate the answer to a semi-autonomous AI:
+            </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {delegableAis.map((ai) => (
+                <button
+                  key={ai.player_id}
+                  onClick={() => handleDelegateToAi(ai.player_id)}
+                  className="btn btn-secondary py-1 px-3 text-sm font-medium"
+                >
+                  🤖 {ai.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Undo a delegation - return the answer to the human who buzzed */}
+        {!isHuman && humanBuzzerId && (
+          <div className="mb-4 text-center">
+            <button
+              onClick={handleBackToHuman}
+              className="text-xs text-gray-500 underline hover:text-gray-700"
+            >
+              ← Back to human answer
+            </button>
+          </div>
+        )}
 
         {/* Correct answer display (for AI buzzes) */}
         {!isHuman && gameState.currentTossupAnswer && (
@@ -142,7 +219,7 @@ export function AnswerReviewDialog() {
         {/* Points info */}
         <div className="text-center text-sm text-gray-500 mb-4">
           <span className="text-green-600 font-medium">
-            +{gameState.tossupPointsValue}
+            +{correctPoints}
           </span>{' '}
           if correct |{' '}
           {penaltyValue > 0 ? (
