@@ -1,4 +1,5 @@
 import type { AIPlayerKwargs, GameConfig, Player } from './types';
+import { bonusWeightClass, tossupWeightClass } from './aiWeightClass';
 
 const DEFAULT_BONUS_WEIGHT_DEFLATION = {
   lightweight: 1,
@@ -36,7 +37,7 @@ export function bonusConsultPoints(config: GameConfig, owningTeamPlayers: Player
   let deflation = 0;
   for (const player of owningTeamPlayers) {
     if (player.type !== 'ai') continue;
-    const weightClass = (player.extra_kwargs as AIPlayerKwargs).weight_class;
+    const weightClass = bonusWeightClass(player.extra_kwargs as AIPlayerKwargs);
     if (weightClass) {
       deflation += weights[weightClass] ?? 0;
     }
@@ -56,7 +57,7 @@ export function bonusConsultPoints(config: GameConfig, owningTeamPlayers: Player
  * weight-class factors for backwards compatibility.
  */
 export function aiTossupPoints(config: GameConfig, base: number, player: Player): number {
-  const weightClass = (player.extra_kwargs as AIPlayerKwargs).weight_class;
+  const weightClass = tossupWeightClass(player.extra_kwargs as AIPlayerKwargs);
   const mode = config.tossup_deflation_mode;
 
   if (!mode || mode === 'weighted') {

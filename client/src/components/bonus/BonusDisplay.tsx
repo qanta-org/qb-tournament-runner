@@ -1,5 +1,6 @@
 import { useGame } from '../../context/GameContext';
 import type { TeamId } from '../../../../shared/types';
+import { bonusSystemLabelForOwner } from '../../../../shared/modelLabels';
 
 export function BonusDisplay() {
   const { gameState, gameConfig, getTeamColor } = useGame();
@@ -158,8 +159,13 @@ export function BonusDisplay() {
             <div className="space-y-2">
               {gameState.bonusResponses.map((response, idx) => {
                 const confColor = getConfidenceColor(response.confidence);
-                // bonusOwner is guaranteed to be non-null due to component-level check
-                const playerName = getPlayerName(response.system, gameConfig, gameState.bonusOwner as TeamId);
+                const bonusOwner = gameState.bonusOwner as TeamId;
+                const bonusName = bonusSystemLabelForOwner(
+                  response.system,
+                  bonusOwner,
+                  gameConfig.team_a,
+                  gameConfig.team_b
+                );
 
                 return (
                   <div
@@ -171,7 +177,7 @@ export function BonusDisplay() {
                         className="font-semibold"
                         style={{ color: teamColor }}
                       >
-                        {playerName}
+                        {bonusName}
                       </span>
                     </div>
                     <div className="flex-1">
@@ -234,21 +240,4 @@ function getConfidenceColor(confidence: number): string {
   if (confidence >= 0.8) return '#66bb6a';
   if (confidence >= 0.6) return '#e1b800';
   return '#888888';
-}
-
-function getPlayerName(
-  systemName: string,
-  gameConfig: any,
-  bonusOwner: 'team_a' | 'team_b'
-): string {
-  const team = bonusOwner === 'team_a' ? gameConfig.team_a : gameConfig.team_b;
-  for (const player of team.players) {
-    if (player.type === 'ai') {
-      const kwargs = player.extra_kwargs as { bonus_model: string };
-      if (kwargs.bonus_model === systemName) {
-        return player.name;
-      }
-    }
-  }
-  return systemName;
 }

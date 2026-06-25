@@ -3,13 +3,9 @@ import { useGame } from '../../context/GameContext';
 import { PlayerManagementDialog } from '../dialogs/PlayerManagementDialog';
 import { maxAiTossupPoints } from '../../utils/aiScoring';
 import { bonusConsultPoints } from '../../../../shared/scoring';
-import type {
-  Team,
-  TeamId,
-  Player,
-  AIBuzzMode,
-  AIWeightClass,
-} from '../../../../shared/types';
+import { aiModelSummary } from '../../../../shared/modelLabels';
+import type { AIBuzzMode, AIPlayerKwargs, AIWeightClass, Player, Team, TeamId } from '../../../../shared/types';
+import { bonusWeightClass, tossupWeightClass } from '../../../../shared/aiWeightClass';
 
 interface TeamPanelProps {
   team: Team;
@@ -64,10 +60,9 @@ export function TeamPanel({
       player.type === 'human'
         ? (player.extra_kwargs as { buzzer_key: string }).buzzer_key
         : null;
-    const weightClass =
-      player.type === 'ai'
-        ? (player.extra_kwargs as { weight_class?: AIWeightClass }).weight_class
-        : undefined;
+    const kwargs = player.type === 'ai' ? (player.extra_kwargs as AIPlayerKwargs) : null;
+    const tossupWc = kwargs ? tossupWeightClass(kwargs) : undefined;
+    const bonusWc = kwargs ? bonusWeightClass(kwargs) : undefined;
     const maxPoints =
       player.type === 'ai' && gameConfig ? maxAiTossupPoints(gameConfig, player) : null;
 
@@ -87,17 +82,30 @@ export function TeamPanel({
         )}
 
         {/* Player name */}
-        <span className={isMuted ? 'line-through text-gray-400' : ''}>
-          {player.name}
-        </span>
+        <div className={isMuted ? 'line-through text-gray-400' : ''}>
+          <div>{player.name}</div>
+          {player.type === 'ai' && (
+            <div className="text-[10px] text-gray-400 font-normal">
+              {aiModelSummary(player.extra_kwargs as AIPlayerKwargs)}
+            </div>
+          )}
+        </div>
 
-        {/* Weight class badge for AIs */}
-        {weightClass && WEIGHT_CLASS_BADGE[weightClass] && (
+        {/* Weight class badges for AIs */}
+        {tossupWc && WEIGHT_CLASS_BADGE[tossupWc] && (
           <span
-            className={`px-1 py-0.5 rounded text-[10px] font-semibold ${WEIGHT_CLASS_BADGE[weightClass].className}`}
-            title={`Weight class: ${weightClass}`}
+            className={`px-1 py-0.5 rounded text-[10px] font-semibold ${WEIGHT_CLASS_BADGE[tossupWc].className}`}
+            title={`Tossup weight: ${tossupWc}`}
           >
-            {WEIGHT_CLASS_BADGE[weightClass].label}
+            T:{WEIGHT_CLASS_BADGE[tossupWc].label}
+          </span>
+        )}
+        {bonusWc && bonusWc !== tossupWc && WEIGHT_CLASS_BADGE[bonusWc] && (
+          <span
+            className={`px-1 py-0.5 rounded text-[10px] font-semibold ${WEIGHT_CLASS_BADGE[bonusWc].className}`}
+            title={`Bonus weight: ${bonusWc}`}
+          >
+            B:{WEIGHT_CLASS_BADGE[bonusWc].label}
           </span>
         )}
 

@@ -1,5 +1,9 @@
 import { useGame } from '../../context/GameContext';
-import type { TossupResponse } from '../../../../shared/types';
+import type { AIPlayerKwargs, TossupResponse } from '../../../../shared/types';
+import {
+  aiPlayersForTossupSystem,
+  tossupSystemLabelInGame,
+} from '../../../../shared/modelLabels';
 
 interface GuessTableProps {
   guesses: TossupResponse[];
@@ -16,50 +20,38 @@ export function GuessTable({ guesses }: GuessTableProps) {
     );
   }
 
-  // Map system names to players and teams
-  const getPlayerInfo = (systemName: string) => {
-    for (const player of gameConfig.team_a.players) {
-      if (player.type === 'ai') {
-        const kwargs = player.extra_kwargs as { tossup_model: string };
-        if (kwargs.tossup_model === systemName) {
-          return { player, teamId: 'team_a' as const };
-        }
-      }
-    }
-    for (const player of gameConfig.team_b.players) {
-      if (player.type === 'ai') {
-        const kwargs = player.extra_kwargs as { tossup_model: string };
-        if (kwargs.tossup_model === systemName) {
-          return { player, teamId: 'team_b' as const };
-        }
-      }
-    }
-    return null;
+  // Map tossup response system keys to players on each team.
+  const getTeamPlayers = (systemName: string, teamId: 'team_a' | 'team_b') => {
+    const team = teamId === 'team_a' ? gameConfig.team_a : gameConfig.team_b;
+    return aiPlayersForTossupSystem(team, systemName);
   };
+
+  const modelLabel = (systemName: string) =>
+    tossupSystemLabelInGame(systemName, gameConfig.team_a, gameConfig.team_b);
 
   // Sort by confidence
   const sortedGuesses = [...guesses].sort((a, b) => b.confidence - a.confidence);
 
   // Split into team A and team B
-  const teamAGuesses = sortedGuesses.filter((g) => {
-    const info = getPlayerInfo(g.system);
-    return info?.teamId === 'team_a';
-  });
-  const teamBGuesses = sortedGuesses.filter((g) => {
-    const info = getPlayerInfo(g.system);
-    return info?.teamId === 'team_b';
-  });
+  const teamAGuesses = sortedGuesses.filter((g) => getTeamPlayers(g.system, 'team_a').length > 0);
+  const teamBGuesses = sortedGuesses.filter((g) => getTeamPlayers(g.system, 'team_b').length > 0);
 
   const renderGuessRow = (guess: TossupResponse, teamId: 'team_a' | 'team_b') => {
-    const info = getPlayerInfo(guess.system);
+    const players = getTeamPlayers(guess.system, teamId);
     const teamColor = getTeamColor(teamId);
     const confColor = getConfidenceColor(guess.confidence);
     const showGuess = guess.buzz ? guess.guess : '?????';
+    const tossupName = modelLabel(guess.system);
+    const displayName =
+      players.length > 0
+        ? players.map((p) => p.name).join(', ')
+        : tossupName;
 
     return (
-      <tr key={guess.system} className="border-b border-gray-100 last:border-b-0">
+      <tr key={`${teamId}-${guess.system}`} className="border-b border-gray-100 last:border-b-0">
         <td className="py-3 px-4 font-medium" style={{ color: teamColor }}>
-          {info?.player.name || guess.system.slice(0, 18)}
+          <div>{displayName}</div>
+          <div className="text-xs font-normal text-gray-400 truncate">{tossupName}</div>
         </td>
         <td className="py-3 px-4 text-right font-semibold" style={{ color: confColor }}>
           {Math.round(guess.confidence * 100)}%

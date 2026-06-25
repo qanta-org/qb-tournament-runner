@@ -1,4 +1,4 @@
-import type { AIWeightClass } from '../../../shared/types';
+import type { AIWeightClass, ModelRosterEntry } from '../../../shared/types';
 
 export interface ApiRosterPlayer {
   player_id: string;
@@ -9,7 +9,6 @@ export interface ApiRosterPlayer {
   bonus_model?: string;
   description?: string;
   default_buzzer_key?: string;
-  skill_level?: string;
   weight_class?: AIWeightClass;
   team?: string;
 }
@@ -19,3 +18,21 @@ export interface RosterResponse {
   source: string;
 }
 
+export interface ModelRosterResponse {
+  entries: ModelRosterEntry[];
+  source: string;
+}
+
+export async function fetchTossupModelRoster(datasetId?: string): Promise<ModelRosterResponse> {
+  const query = datasetId ? `?dataset=${encodeURIComponent(datasetId)}` : '';
+  const res = await fetch(`/api/rosters/ai/tossup${query}`);
+  if (!res.ok) return { entries: [], source: 'none' };
+  return res.json();
+}
+
+export async function fetchBonusModelRoster(datasetId?: string): Promise<ModelRosterResponse> {
+  const query = datasetId ? `?dataset=${encodeURIComponent(datasetId)}` : '';
+  const res = await fetch(`/api/rosters/ai/bonus${query}`);
+  if (!res.ok) return { entries: [], source: 'none' };
+  return res.json();
+}

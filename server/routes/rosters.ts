@@ -3,6 +3,25 @@ import path from 'path';
 import fs from 'fs';
 import { parse } from 'csv-parse/sync';
 import { fileURLToPath } from 'url';
+import type { ModelRosterEntry } from '../../shared/types';
+import {
+  normalizeWeightClass,
+  readModelRosterFile,
+  tossupEntriesFromLegacyAiRoster,
+  bonusEntriesFromLegacyAiRoster,
+} from '../data/modelRosters.js';
+
+interface AIRosterEntry {
+  player_id: string;
+  name: string;
+  type: 'ai';
+  tossup_model: string;
+  tossup_model_cost?: number;
+  bonus_model: string;
+  description?: string;
+  default_buzzer_key?: string;
+  weight_class?: ReturnType<typeof normalizeWeightClass>;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,37 +35,12 @@ const ROSTER_BASE_DIRS = [
   path.join(__dirname, '../../../'),              // Parent of buzzer-web
 ];
 
-type AIWeightClass = 'lightweight' | 'midweight' | 'heavyweight';
-
-interface AIRosterEntry {
-  player_id: string;
-  name: string;
-  type: 'ai';
-  tossup_model: string;
-  tossup_model_cost?: number;
-  bonus_model: string;
-  description?: string;
-  default_buzzer_key?: string;
-  skill_level?: string;
-  weight_class?: AIWeightClass;
-}
-
-/** Normalize a raw weight_class cell to a known value, or undefined if blank/unknown. */
-function normalizeWeightClass(raw: unknown): AIWeightClass | undefined {
-  const value = String(raw ?? '').trim().toLowerCase();
-  if (value === 'lightweight' || value === 'midweight' || value === 'heavyweight') {
-    return value;
-  }
-  return undefined;
-}
-
 interface HumanRosterEntry {
   player_id: string;
   name: string;
   type: 'human';
   description?: string;
   default_buzzer_key?: string;
-  skill_level?: string;
 }
 
 type RosterEntry = AIRosterEntry | HumanRosterEntry;
@@ -108,6 +102,88 @@ function findDatasetRosterFile(dataset: string, filename: string): string | null
   return null;
 }
 
+function loadLegacyAiRosterRows(dataset?: string): AIRosterEntry[] {
+  let filePath: string | null = null;
+  if (dataset) {
+    filePath = findDatasetRosterFile(dataset, 'ai_roster.csv');
+  }
+  if (!filePath) {
+    for (const baseDir of ROSTER_BASE_DIRS) {
+      const candidate = path.join(baseDir, 'ai_roster.csv');
+      if (fs.existsSync(candidate)) {
+        filePath = candidate;
+        break;
+      }
+    }
+  }
+  if (!filePath) return [];
+  return loadRosterFile(filePath).filter((e): e is AIRosterEntry => e.type === 'ai');
+}
+
+/**
+ * Load tossup model catalog for a dataset. Prefers `ai_tossup_roster.csv`, falling
+ * back to entries derived from legacy `ai_roster.csv`.
+ */
+function loadTossupModelRoster(dataset?: string): { entries: ModelRosterEntry[]; source: string } {
+  if (dataset) {
+    const dedicated = findDatasetRosterFile(dataset, 'ai_tossup_roster.csv');
+    if (dedicated) {
+      const entries = readModelRosterFile(dedicated);
+      if (entries.length > 0) return { entries, source: dataset };
+    }
+  }
+
+  for (const baseDir of ROSTER_BASE_DIRS) {
+    const globalPath = path.join(baseDir, 'ai_tossup_roster.csv');
+    if (fs.existsSync(globalPath)) {
+      const entries = readModelRosterFile(globalPath);
+      if (entries.length > 0) return { entries, source: 'global' };
+    }
+  }
+
+  const legacyRows = loadLegacyAiRosterRows(dataset);
+  if (legacyRows.length > 0) {
+    return {
+      entries: tossupEntriesFromLegacyAiRoster(legacyRows),
+      source: dataset ? `${dataset} (legacy ai_roster.csv)` : 'legacy ai_roster.csv',
+    };
+  }
+
+  return { entries: [], source: 'none' };
+}
+
+/**
+ * Load bonus model catalog for a dataset. Prefers `ai_bonus_roster.csv`, falling
+ * back to entries derived from legacy `ai_roster.csv`.
+ */
+function loadBonusModelRoster(dataset?: string): { entries: ModelRosterEntry[]; source: string } {
+  if (dataset) {
+    const dedicated = findDatasetRosterFile(dataset, 'ai_bonus_roster.csv');
+    if (dedicated) {
+      const entries = readModelRosterFile(dedicated);
+      if (entries.length > 0) return { entries, source: dataset };
+    }
+  }
+
+  for (const baseDir of ROSTER_BASE_DIRS) {
+    const globalPath = path.join(baseDir, 'ai_bonus_roster.csv');
+    if (fs.existsSync(globalPath)) {
+      const entries = readModelRosterFile(globalPath);
+      if (entries.length > 0) return { entries, source: 'global' };
+    }
+  }
+
+  const legacyRows = loadLegacyAiRosterRows(dataset);
+  if (legacyRows.length > 0) {
+    return {
+      entries: bonusEntriesFromLegacyAiRoster(legacyRows),
+      source: dataset ? `${dataset} (legacy ai_roster.csv)` : 'legacy ai_roster.csv',
+    };
+  }
+
+  return { entries: [], source: 'none' };
+}
+
 /**
  * Load a global roster file from base dirs only (no subdirectory scan).
  */
@@ -151,7 +227,6 @@ function loadRosterFile(filename: string): RosterEntry[] {
           bonus_model: record.bonus_model || '',
           description: record.description || '',
           default_buzzer_key: record.default_buzzer_key || '',
-          skill_level: record.skill_level || '',
           weight_class: normalizeWeightClass(record.weight_class),
         };
       } else {
@@ -161,7 +236,6 @@ function loadRosterFile(filename: string): RosterEntry[] {
           type: 'human' as const,
           description: record.description || '',
           default_buzzer_key: record.default_buzzer_key || '',
-          skill_level: record.skill_level || '',
         };
       }
     });
@@ -321,6 +395,18 @@ rostersRouter.get('/ai', (req, res) => {
     players: entries.filter(e => e.type === 'ai'),
     source,
   });
+});
+
+rostersRouter.get('/ai/tossup', (req, res) => {
+  const dataset = req.query.dataset as string | undefined;
+  const { entries, source } = loadTossupModelRoster(dataset);
+  res.json({ entries, source });
+});
+
+rostersRouter.get('/ai/bonus', (req, res) => {
+  const dataset = req.query.dataset as string | undefined;
+  const { entries, source } = loadBonusModelRoster(dataset);
+  res.json({ entries, source });
 });
 
 /**

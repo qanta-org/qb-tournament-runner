@@ -28,12 +28,45 @@ export type DeflationMode = 'none' | 'static' | 'weighted';
 export type AIBuzzMode = 'autonomous' | 'muted' | 'semi';
 
 export interface AIPlayerKwargs {
+  /** Response-file key for tossup buzzes (maps to `{tossup_model}.buzz.csv`). */
   tossup_model: string;
+  /** Response-file key for bonus consults (maps to `{bonus_model}.bonus.csv`). */
   bonus_model: string;
-  /** Model weight class (lightweight/midweight/heavyweight) for tossup score scaling. */
+  /** Human-readable tossup model name from `ai_tossup_roster.csv` (UI/logging). */
+  tossup_model_name?: string;
+  /** Human-readable bonus model name from `ai_bonus_roster.csv` (UI/logging). */
+  bonus_model_name?: string;
+  /**
+   * Setup-time UI hint: whether the tossup and bonus models are coupled (one model
+   * choice drives both) or decoupled (independently chosen). This is purely a UI
+   * convenience; the engine always reads the concrete `tossup_model` / `bonus_model`
+   * fields and ignores this flag. When absent, coupling is inferred from whether the
+   * two models are equal (backward compatible with existing rosters).
+   */
+  coupled?: boolean;
+  /** Weight class for tossup score scaling (from `ai_tossup_roster.csv`). */
+  tossup_weight_class?: AIWeightClass;
+  /** Weight class for bonus consult deflation (from `ai_bonus_roster.csv`). */
+  bonus_weight_class?: AIWeightClass;
+  /**
+   * @deprecated Legacy single weight class. Prefer `tossup_weight_class` /
+   * `bonus_weight_class`. Still read as fallback by scoring helpers.
+   */
   weight_class?: AIWeightClass;
   /** Keyboard key used by a human to buzz on this AI's behalf in semi-autonomous mode. */
   buzzer_key?: string;
+}
+
+/**
+ * A catalog entry from `ai_tossup_roster.csv` or `ai_bonus_roster.csv`.
+ * Separates the display identity (id + name) from the response-file key (`model`).
+ */
+export interface ModelRosterEntry {
+  id: string;
+  name: string;
+  model: string;
+  weight_class?: AIWeightClass;
+  description?: string;
 }
 
 export interface HumanPlayerKwargs {
@@ -53,6 +86,18 @@ export interface Team {
 }
 
 export type TeamId = 'team_a' | 'team_b';
+
+/**
+ * Metadata about an AI model discovered in a dataset's responses directory.
+ * `hasTossupResponses` / `hasBonusResponses` indicate which phases the model can
+ * serve (a model may provide tossup responses, bonus responses, or both), which
+ * lets the setup UI offer separate tossup and bonus model pools.
+ */
+export interface ModelInfo {
+  name: string;
+  hasTossupResponses: boolean;
+  hasBonusResponses: boolean;
+}
 
 // ============================================
 // Game Configuration
@@ -439,6 +484,8 @@ export interface TossupResponseRecord {
       name: string;
       team: string;
     };
+    /** Display name of the tossup model that buzzed (from roster or fallback to model key). */
+    tossupModelName?: string;
     position: number;
     guess: string;
     points: number;

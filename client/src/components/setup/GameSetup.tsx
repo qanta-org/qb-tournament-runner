@@ -3,7 +3,8 @@ import { useGame } from '../../context/GameContext';
 import { TeamBuilder } from './TeamBuilder';
 import { FileUploader } from './FileUploader';
 import { fetchRulePresets, fetchRulePreset, type RulePresetSummary } from '../../api/config';
-import type { DeflationMode, GameConfig, Team } from '../../../../shared/types';
+import type { AIPlayerKwargs, DeflationMode, GameConfig, ModelInfo, Team } from '../../../../shared/types';
+import { aiModelSummary } from '../../../../shared/modelLabels';
 import {
   DEFAULT_AI_TOSSUP_SCORE_FACTORS,
   DEFAULT_AUTONOMOUS_K,
@@ -45,7 +46,7 @@ export function GameSetup() {
   const [step, setStep] = useState<SetupStep>('files');
   const [teamA, setTeamA] = useState<Team>(DEFAULT_TEAM_A);
   const [teamB, setTeamB] = useState<Team>(DEFAULT_TEAM_B);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>('');
   const [files, setFiles] = useState({
     tossupFile: '',
@@ -143,7 +144,7 @@ export function GameSetup() {
   };
 
   // Handle dataset selection from FileUploader - update available models
-  const handleFilesChange = (newFiles: typeof files, models?: string[], datasetId?: string) => {
+  const handleFilesChange = (newFiles: typeof files, models?: ModelInfo[], datasetId?: string) => {
     setFiles(newFiles);
     if (models) {
       setAvailableModels(models);
@@ -676,7 +677,7 @@ export function GameSetup() {
                             {p.type === 'human' ? '👤' : '🤖'} {p.name}
                             {p.type === 'ai' && (
                               <span className="text-xs text-gray-400 ml-1">
-                                ({(p.extra_kwargs as any).tossup_model})
+                                ({aiModelSummary(p.extra_kwargs as AIPlayerKwargs)})
                               </span>
                             )}
                           </li>
@@ -691,7 +692,7 @@ export function GameSetup() {
                             {p.type === 'human' ? '👤' : '🤖'} {p.name}
                             {p.type === 'ai' && (
                               <span className="text-xs text-gray-400 ml-1">
-                                ({(p.extra_kwargs as any).tossup_model})
+                                ({aiModelSummary(p.extra_kwargs as AIPlayerKwargs)})
                               </span>
                             )}
                           </li>

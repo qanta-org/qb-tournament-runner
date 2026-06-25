@@ -16,8 +16,10 @@ import type {
   TossupToken,
   AIBuzzMode,
   BonusPartDecision,
+  AIPlayerKwargs,
 } from '../../shared/types.js';
 import { aiTossupPoints, bonusConsultPoints } from '../../shared/scoring.js';
+import { bonusModelLabel, tossupModelLabel } from '../../shared/modelLabels.js';
 import { createInitialGameState } from '../../shared/types.js';
 import { Questions } from '../data/questions.js';
 import { Buzzes } from '../data/buzzes.js';
@@ -41,8 +43,6 @@ export class GameEngine {
   // Player mappings
   private teamAssignment: Map<string, TeamId> = new Map();
   private players: Map<string, Player> = new Map();
-  private tossupModelToPlayer: Map<string, string> = new Map();
-  private bonusModelToPlayer: Map<string, string> = new Map();
   private buzzerKeyToPlayerId: Map<string, string> = new Map();
 
   // Current tossup state
@@ -142,11 +142,12 @@ export class GameEngine {
         if (player.type === 'human') {
           const kwargs = player.extra_kwargs as { buzzer_key: string };
           this.buzzerKeyToPlayerId.set(kwargs.buzzer_key.toUpperCase(), player.player_id);
-        } else {
-          const kwargs = player.extra_kwargs as { tossup_model: string; bonus_model: string };
-          this.tossupModelToPlayer.set(kwargs.tossup_model, player.player_id);
-          this.bonusModelToPlayer.set(kwargs.bonus_model, player.player_id);
         }
+        // AI players are resolved by their tossup_model / bonus_model at runtime
+        // (see checkForAIBuzzes / loadOwningTeamBonusResponses). We intentionally do
+        // not build a model -> player map here: multiple AI teammates may share a
+        // model (decoupled tossup/bonus selection), which a single-valued map cannot
+        // represent.
       }
     };
 
@@ -240,36 +241,74 @@ export class GameEngine {
   }
 
   /**
-   * Load AI responses from the model directory
+   * Get all AI players across both teams.
+   */
+  private getAIPlayers(): Player[] {
+    return [
+      ...this.config.team_a.players.filter((p) => p.type === 'ai'),
+      ...this.config.team_b.players.filter((p) => p.type === 'ai'),
+    ];
+  }
+
+  /** Resolve a bonus response system key to its roster display name. */
+  private bonusModelLabelForSystem(systemKey: string): string {
+    const owner = this.state.bonusOwner;
+    if (!owner) return systemKey;
+    for (const player of this.config[owner].players) {
+      if (player.type === 'ai') {
+        const kwargs = player.extra_kwargs as AIPlayerKwargs;
+        if (kwargs.bonus_model === systemKey) {
+          return bonusModelLabel(kwargs);
+        }
+      }
+    }
+    return systemKey;
+  }
+
+  /**
+   * Load AI responses from the model directory.
+   *
+   * Tossup and bonus models are decoupled and may be shared across teammates, so
+   * we load each distinct model file exactly once. This matters for bonuses in
+   * particular: `Buzzes.addBonusResponse` appends rows, so loading the same bonus
+   * model twice would duplicate every bonus response. (Tossup loading is keyed by
+   * token position and is naturally idempotent, but we dedupe it too for clarity.)
    */
   private async loadAIResponses(): Promise<void> {
     const modelDir = this.config.model_directory;
 
-    // Get all AI players
-    const aiPlayers = [
-      ...this.config.team_a.players.filter((p) => p.type === 'ai'),
-      ...this.config.team_b.players.filter((p) => p.type === 'ai'),
-    ];
+    const aiPlayers = this.getAIPlayers();
 
+    // Map each distinct model to a representative player, used only for clearer
+    // error messages if a response file is missing.
+    const tossupModels = new Map<string, Player>();
+    const bonusModels = new Map<string, Player>();
     for (const player of aiPlayers) {
       const kwargs = player.extra_kwargs as { tossup_model: string; bonus_model: string };
+      if (kwargs.tossup_model && !tossupModels.has(kwargs.tossup_model)) {
+        tossupModels.set(kwargs.tossup_model, player);
+      }
+      if (kwargs.bonus_model && !bonusModels.has(kwargs.bonus_model)) {
+        bonusModels.set(kwargs.bonus_model, player);
+      }
+    }
 
-      // Load tossup responses
-      const tossupBasePath = path.join(modelDir, kwargs.tossup_model);
-      const tossupSuccess = this.buzzes.addTossupSystem(tossupBasePath);
+    for (const [model, player] of tossupModels) {
+      const tossupSuccess = this.buzzes.addTossupSystem(path.join(modelDir, model));
       if (!tossupSuccess) {
         throw new Error(
-          `Failed to load tossup responses for ${player.name} (model: ${kwargs.tossup_model})`
+          `Failed to load tossup responses for ${player.name} (model: ${model})`
         );
       }
+    }
 
-      // Load bonus responses if bonus file is specified
-      if (this.config.bonus_file) {
-        const bonusBasePath = path.join(modelDir, kwargs.bonus_model);
-        const bonusSuccess = this.buzzes.addBonusSystem(bonusBasePath);
+    // Load bonus responses if bonus file is specified
+    if (this.config.bonus_file) {
+      for (const [model, player] of bonusModels) {
+        const bonusSuccess = this.buzzes.addBonusSystem(path.join(modelDir, model));
         if (!bonusSuccess) {
           throw new Error(
-            `Failed to load bonus responses for ${player.name} (model: ${kwargs.bonus_model})`
+            `Failed to load bonus responses for ${player.name} (model: ${model})`
           );
         }
       }
@@ -461,14 +500,19 @@ export class GameEngine {
    * Check if any AI players should buzz
    */
   private checkForAIBuzzes(guesses: Map<string, TossupResponse>): void {
+    // [playerId, guess] for each AI player that is eligible to buzz this token.
     const validBuzzes: Array<[string, TossupResponse]> = [];
 
     // 0-indexed position of the token currently being processed.
     const currentPosition = this.state.tokenIndex;
 
-    for (const [system, guess] of guesses) {
-      const playerId = this.tossupModelToPlayer.get(system);
-      if (!playerId) continue;
+    // Iterate over AI players (not over guess systems) so that multiple teammates
+    // sharing a tossup model are each evaluated independently.
+    for (const player of this.getAIPlayers()) {
+      const playerId = player.player_id;
+      const kwargs = player.extra_kwargs as { tossup_model: string };
+      const guess = guesses.get(kwargs.tossup_model);
+      if (!guess) continue;
 
       const playerTeam = this.teamAssignment.get(playerId)!;
       const otherTeam = playerTeam === 'team_a' ? 'team_b' : 'team_a';
@@ -498,14 +542,13 @@ export class GameEngine {
       const buzzedAtOrAfterK =
         !!guess.buzz && guess.token_position !== undefined && guess.token_position >= k;
       if (buzzedAtOrAfterK || (this.state.teamBuzzed[otherTeam] && isLastWord)) {
-        validBuzzes.push([system, guess]);
+        validBuzzes.push([playerId, guess]);
       }
     }
 
     // Handle first valid buzz
     if (validBuzzes.length > 0 && this.tossupInProgress()) {
-      const [system, guess] = validBuzzes[0];
-      const playerId = this.tossupModelToPlayer.get(system)!;
+      const [playerId, guess] = validBuzzes[0];
 
       this.state.buzzingPlayer = playerId;
       this.state.currentGuesses = Array.from(guesses.values());
@@ -677,6 +720,8 @@ export class GameEngine {
             name: player.name,
             team: playerTeam === 'team_a' ? this.config.team_a.name : this.config.team_b.name,
           },
+          tossupModelName:
+            player.type === 'ai' ? tossupModelLabel(player.extra_kwargs as AIPlayerKwargs) : undefined,
           position: this.state.wordIndex,
           guess: answer,
           points,
@@ -851,13 +896,23 @@ export class GameEngine {
 
   /** Load the owning team's AI responses for the current bonus part. */
   private loadOwningTeamBonusResponses(): BonusResponse[] {
+    if (!this.state.bonusOwner) return [];
+
     const partNum = this.state.currentBonusPart + 1; // 1-indexed
     const responses = this.buzzes.getBonusGuesses(this.state.currentBonusId!, partNum);
-    return responses.filter((r) => {
-      const playerId = this.bonusModelToPlayer.get(r.system);
-      if (!playerId) return false;
-      return this.teamAssignment.get(playerId) === this.state.bonusOwner;
-    });
+
+    // Collect the bonus models used by the owning team's AI players. Using a set of
+    // models (rather than a model -> player map) supports teammates that share a
+    // bonus model under decoupled selection.
+    const owningBonusModels = new Set<string>();
+    for (const player of this.config[this.state.bonusOwner].players) {
+      if (player.type === 'ai') {
+        const kwargs = player.extra_kwargs as { bonus_model: string };
+        if (kwargs.bonus_model) owningBonusModels.add(kwargs.bonus_model);
+      }
+    }
+
+    return responses.filter((r) => owningBonusModels.has(r.system));
   }
 
   /**
@@ -900,13 +955,24 @@ export class GameEngine {
 
     // Record the part
     if (this.currentRecord?.bonusResponses) {
+      const bonusResponsesLog: Record<string, string> = {};
+      const shouldLogBonusAi = decision === 'consult_ai' || this.state.bonusAiRevealed;
+      if (shouldLogBonusAi) {
+        const responses = this.state.bonusAiRevealed
+          ? this.state.bonusResponses
+          : this.loadOwningTeamBonusResponses();
+        for (const response of responses) {
+          bonusResponsesLog[this.bonusModelLabelForSystem(response.system)] = response.guess;
+        }
+      }
+
       this.currentRecord.bonusResponses.parts.push({
         teamName:
           this.state.bonusOwner === 'team_a'
             ? this.config.team_a.name
             : this.config.team_b.name,
         points,
-        responses: {},
+        responses: bonusResponsesLog,
         finalGuess: answer,
         decision,
         aiRevealed: this.state.bonusAiRevealed,

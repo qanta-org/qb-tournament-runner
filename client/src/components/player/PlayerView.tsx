@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useGame } from '../../context/GameContext';
-import type { Team, TeamId, Player, TossupResponse, AIBuzzMode } from '../../../../shared/types';
+import type { Team, TeamId, Player, TossupResponse, AIBuzzMode, AIPlayerKwargs } from '../../../../shared/types';
+import { bonusSystemLabelForOwner, tossupModelLabel } from '../../../../shared/modelLabels';
 import { BONUS_AI_EXPLANATION_MAX_WORDS } from '../../constants/playerView';
 import { truncateWords } from '../../utils/text';
 import { maxAiTossupPoints } from '../../utils/aiScoring';
@@ -457,15 +458,18 @@ function TeamTossupConfidences({
       </div>
       <div className="space-y-1.5">
         {aiPlayers.map((player) => {
-          const model = (player.extra_kwargs as { tossup_model: string }).tossup_model;
-          const guess = guesses.find((g) => g.system === model);
+          const kwargs = player.extra_kwargs as AIPlayerKwargs;
+          const guess = guesses.find((g) => g.system === kwargs.tossup_model);
           const confColor = guess ? getConfidenceColor(guess.confidence) : '#888888';
           return (
             <div
               key={player.player_id}
               className="pv-conf-row"
             >
-              <span className="text-sm text-gray-700 truncate pr-2">{player.name}</span>
+              <div className="min-w-0 pr-2">
+                <div className="text-sm text-gray-700 truncate">{player.name}</div>
+                <div className="text-[11px] text-gray-400 truncate">{tossupModelLabel(kwargs)}</div>
+              </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 {guess?.buzz && <span className="text-red-500 text-xs">🚨</span>}
                 <span className="font-bold text-sm" style={{ color: confColor }}>
@@ -636,17 +640,7 @@ function PlayerBonusResponses() {
   if (!gameConfig || !gameState.bonusOwner) return null;
 
   const teamColor = getTeamColor(gameState.bonusOwner);
-
-  const getPlayerName = (systemName: string): string => {
-    const team = gameState.bonusOwner === 'team_a' ? gameConfig.team_a : gameConfig.team_b;
-    for (const player of team.players) {
-      if (player.type === 'ai') {
-        const kwargs = player.extra_kwargs as { bonus_model: string };
-        if (kwargs.bonus_model === systemName) return player.name;
-      }
-    }
-    return systemName;
-  };
+  const bonusOwner = gameState.bonusOwner;
 
   return (
     <div className="pv-side-panel">
@@ -659,7 +653,12 @@ function PlayerBonusResponses() {
       <div className="space-y-2">
         {gameState.bonusResponses.map((response, idx) => {
           const confColor = getConfidenceColor(response.confidence);
-          const playerName = getPlayerName(response.system);
+          const bonusName = bonusSystemLabelForOwner(
+            response.system,
+            bonusOwner,
+            gameConfig.team_a,
+            gameConfig.team_b
+          );
           const explanationText = response.explanation
             ? truncateWords(response.explanation, BONUS_AI_EXPLANATION_MAX_WORDS)
             : '';
@@ -668,7 +667,7 @@ function PlayerBonusResponses() {
             <div key={idx} className="pv-inset p-3">
               <div className="flex items-center justify-between mb-1.5">
                 <span className="font-semibold text-sm" style={{ color: teamColor }}>
-                  {playerName}
+                  {bonusName}
                 </span>
                 <span className="font-bold text-sm" style={{ color: confColor }}>
                   {Math.round(response.confidence * 100)}%

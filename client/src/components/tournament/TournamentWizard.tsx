@@ -7,10 +7,16 @@ import type {
   PacketInfo,
   Player,
   CreateTournamentParams,
+  AIPlayerKwargs,
+  AIWeightClass,
+  ModelInfo,
+  ModelRosterEntry,
 } from '../../../../shared/types';
 import { DEFAULT_GAME_CONFIG } from '../../../../shared/types';
 import { fetchRulePresets, fetchRulePreset, type RulePresetSummary } from '../../api/config';
 import type { DeflationMode, GameConfig } from '../../../../shared/types';
+import { AiModelEditor, buildAiKwargsFromRoster, deriveModelPools } from '../setup/TeamBuilder';
+import { fetchBonusModelRoster, fetchTossupModelRoster } from '../../api/rosters';
 import {
   buildScheduleRounds,
   computeFormatSummary,
@@ -43,10 +49,193 @@ interface DatasetInfo {
   tossupFile?: string;
   bonusFile?: string;
   humanPlayers?: { player_id: string; name: string; type: string; team?: string }[];
-  aiPlayers?: { player_id: string; name: string; type: string; tossup_model?: string; bonus_model?: string }[];
+  aiPlayers?: {
+    player_id: string;
+    name: string;
+    type: string;
+    tossup_model?: string;
+    bonus_model?: string;
+    weight_class?: AIWeightClass;
+  }[];
   path?: string;
   responsesDir?: string;
-  models?: { name: string }[];
+  models?: ModelInfo[];
+}
+
+type RosterAiPlayer = NonNullable<DatasetInfo['aiPlayers']>[number];
+
+/** Build AI kwargs from a tournament roster AI entry, inferring coupling and display names. */
+function buildTournamentAiKwargs(
+  rp: RosterAiPlayer,
+  tossupRoster: ModelRosterEntry[],
+  bonusRoster: ModelRosterEntry[]
+): AIPlayerKwargs {
+  return buildAiKwargsFromRoster({ ...rp, type: 'ai' as const }, tossupRoster, bonusRoster);
+}
+
+/**
+ * Per-team AI teammate assignment for the tournament wizard. Lets each enabled
+ * team add AI teammates (from the dataset roster or custom) and freely compose
+ * their tossup/bonus models via the shared coupled/decoupled editor.
+ */
+function TournamentAiAssignment({
+  enabledTeams,
+  rosterAiPlayers,
+  availableModels,
+  tossupRoster,
+  bonusRoster,
+  aiAssignments,
+  setAiAssignments,
+}: {
+  enabledTeams: TournamentTeam[];
+  rosterAiPlayers: RosterAiPlayer[];
+  availableModels: ModelInfo[];
+  tossupRoster: ModelRosterEntry[];
+  bonusRoster: ModelRosterEntry[];
+  aiAssignments: Record<string, Player[]>;
+  setAiAssignments: React.Dispatch<React.SetStateAction<Record<string, Player[]>>>;
+}) {
+  const pools = deriveModelPools(availableModels);
+
+  const setTeamPlayers = (teamId: string, players: Player[]) =>
+    setAiAssignments((prev) => ({ ...prev, [teamId]: players }));
+
+  // Player IDs already assigned anywhere, so a roster AI is not double-added.
+  const assignedIds = new Set(
+    Object.values(aiAssignments).flat().map((p) => p.player_id)
+  );
+
+  const addRosterAi = (teamId: string, rp: RosterAiPlayer) => {
+    const player: Player = {
+      player_id: rp.player_id,
+      name: rp.name,
+      type: 'ai',
+      extra_kwargs: buildTournamentAiKwargs(rp, tossupRoster, bonusRoster),
+    };
+    setTeamPlayers(teamId, [...(aiAssignments[teamId] || []), player]);
+  };
+
+  const addCustomAi = (teamId: string) => {
+    const existing = aiAssignments[teamId] || [];
+    const player: Player = {
+      player_id: `custom_ai_${teamId}_${Date.now()}`,
+      name: `AI Teammate ${existing.length + 1}`,
+      type: 'ai',
+      extra_kwargs: { tossup_model: '', bonus_model: '', coupled: true },
+    };
+    setTeamPlayers(teamId, [...existing, player]);
+  };
+
+  const removeAi = (teamId: string, playerId: string) => {
+    setTeamPlayers(teamId, (aiAssignments[teamId] || []).filter((p) => p.player_id !== playerId));
+  };
+
+  const updateAiKwargs = (
+    teamId: string,
+    playerId: string,
+    next: Partial<AIPlayerKwargs>
+  ) => {
+    setTeamPlayers(
+      teamId,
+      (aiAssignments[teamId] || []).map((p) =>
+        p.player_id === playerId
+          ? { ...p, extra_kwargs: { ...(p.extra_kwargs as AIPlayerKwargs), ...next } }
+          : p
+      )
+    );
+  };
+
+  const updateAiName = (teamId: string, playerId: string, name: string) => {
+    setTeamPlayers(
+      teamId,
+      (aiAssignments[teamId] || []).map((p) => (p.player_id === playerId ? { ...p, name } : p))
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-semibold text-gray-700">AI Teammates (optional)</h3>
+      <p className="text-xs text-gray-500">
+        Add AI teammates to any team. Each AI can use a single model for both phases
+        (coupled) or independent tossup and bonus models (decoupled).
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        {enabledTeams.map((t) => {
+          const assigned = aiAssignments[t.id] || [];
+          const available = rosterAiPlayers.filter((rp) => !assignedIds.has(rp.player_id));
+          return (
+            <div key={t.id} className="bg-white border rounded-lg p-3 space-y-2">
+              <p className="font-medium text-sm text-gray-800">{t.name}</p>
+
+              {assigned.length === 0 ? (
+                <p className="text-xs text-gray-400 italic">No AI teammates</p>
+              ) : (
+                <div className="space-y-2">
+                  {assigned.map((p) => (
+                    <div key={p.player_id} className="bg-gray-50 rounded-lg p-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">🤖</span>
+                        <input
+                          type="text"
+                          value={p.name}
+                          onChange={(e) => updateAiName(t.id, p.player_id, e.target.value)}
+                          className="flex-1 min-w-0 text-sm font-medium bg-transparent border-b focus:outline-none"
+                        />
+                        <button
+                          onClick={() => removeAi(t.id, p.player_id)}
+                          className="text-red-500 hover:text-red-700 p-1"
+                          title="Remove AI teammate"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <AiModelEditor
+                        kwargs={p.extra_kwargs as AIPlayerKwargs}
+                        hasModelInfo={pools.hasModelInfo}
+                        allModelNames={pools.allModelNames}
+                        tossupModelNames={pools.tossupModelNames}
+                        bonusModelNames={pools.bonusModelNames}
+                        coupledModelNames={pools.coupledModelNames}
+                        tossupRoster={tossupRoster}
+                        bonusRoster={bonusRoster}
+                        onChange={(next) => updateAiKwargs(t.id, p.player_id, next)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                {available.length > 0 && (
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const rp = available.find((x) => x.player_id === e.target.value);
+                      if (rp) addRosterAi(t.id, rp);
+                    }}
+                    className="border rounded px-2 py-1 text-xs"
+                  >
+                    <option value="">+ From roster…</option>
+                    {available.map((rp) => (
+                      <option key={rp.player_id} value={rp.player_id}>
+                        {rp.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  onClick={() => addCustomAi(t.id)}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  + Custom AI
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function buildFormat(
@@ -92,6 +281,8 @@ export function TournamentWizard() {
   const [teams, setTeams] = useState<TournamentTeam[]>([]);
   const [enabledTeamIds, setEnabledTeamIds] = useState<Set<string>>(new Set());
   const [aiAssignments, setAiAssignments] = useState<Record<string, Player[]>>({});
+  const [tossupRoster, setTossupRoster] = useState<ModelRosterEntry[]>([]);
+  const [bonusRoster, setBonusRoster] = useState<ModelRosterEntry[]>([]);
   const [prelimStrategy, setPrelimStrategy] = useState<PrelimStrategy>('round_robin');
   const [playoffStrategy, setPlayoffStrategy] = useState<PlayoffStrategy>('none');
   const [playoffBracketSize, setPlayoffBracketSize] = useState<2 | 4 | 8>(4);
@@ -214,6 +405,27 @@ export function TournamentWizard() {
   }, [selectedDataset?.id]);
 
   useEffect(() => {
+    if (!selectedDataset?.id) {
+      setTossupRoster([]);
+      setBonusRoster([]);
+      return;
+    }
+    let cancelled = false;
+    Promise.all([
+      fetchTossupModelRoster(selectedDataset.id),
+      fetchBonusModelRoster(selectedDataset.id),
+    ]).then(([tossup, bonus]) => {
+      if (!cancelled) {
+        setTossupRoster(tossup.entries);
+        setBonusRoster(bonus.entries);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDataset?.id]);
+
+  useEffect(() => {
     if (!selectedDataset?.humanPlayers) return;
     const byTeam = new Map<string, { name: string; players: Player[] }>();
     for (const p of selectedDataset.humanPlayers) {
@@ -232,11 +444,14 @@ export function TournamentWizard() {
       id,
       name,
       humanPlayers: players,
-      aiPlayers: aiAssignments[id] || [],
+      // AI teammates are tracked separately in `aiAssignments` and merged at create
+      // time; keep this effect independent of them so editing AI assignments does
+      // not reset which teams are enabled.
+      aiPlayers: [],
     }));
     setTeams(built);
     setEnabledTeamIds(new Set(built.map((t) => t.id)));
-  }, [selectedDataset?.humanPlayers, aiAssignments]);
+  }, [selectedDataset?.humanPlayers]);
 
   const rebuildSchedule = useCallback(() => {
     const teamIds = enabledTeamList.map((t) => t.id);
@@ -533,6 +748,21 @@ export function TournamentWizard() {
                 No teams found. The dataset needs a human_roster.csv with a "team" column.
               </p>
             )}
+
+            {enabledTeamList.length >= 1 && (
+              <div className="pt-4 border-t">
+                <TournamentAiAssignment
+                  enabledTeams={enabledTeamList}
+                  rosterAiPlayers={selectedDataset?.aiPlayers ?? []}
+                  availableModels={selectedDataset?.models ?? []}
+                  tossupRoster={tossupRoster}
+                  bonusRoster={bonusRoster}
+                  aiAssignments={aiAssignments}
+                  setAiAssignments={setAiAssignments}
+                />
+              </div>
+            )}
+
             <button onClick={goNext} disabled={enabledTeamIds.size < 2}
               className="px-5 py-2.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50 font-medium">
               Next
@@ -1141,6 +1371,12 @@ export function TournamentWizard() {
               <div className="px-4 py-3 flex justify-between">
                 <span className="text-gray-500">Teams</span>
                 <span className="font-medium">{enabledTeamIds.size}</span>
+              </div>
+              <div className="px-4 py-3 flex justify-between">
+                <span className="text-gray-500">AI teammates</span>
+                <span className="font-medium">
+                  {enabledTeamList.reduce((sum, t) => sum + (aiAssignments[t.id]?.length ?? 0), 0)}
+                </span>
               </div>
               <div className="px-4 py-3 flex justify-between">
                 <span className="text-gray-500">Format</span>

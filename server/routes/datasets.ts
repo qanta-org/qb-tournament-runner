@@ -3,6 +3,13 @@ import path from 'path';
 import fs from 'fs';
 import { parse } from 'csv-parse/sync';
 import { fileURLToPath } from 'url';
+import type { AIWeightClass, ModelRosterEntry } from '../../shared/types';
+import {
+  normalizeWeightClass,
+  readModelRosterFile,
+  tossupEntriesFromLegacyAiRoster,
+  bonusEntriesFromLegacyAiRoster,
+} from '../data/modelRosters.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,7 +52,7 @@ interface RosterPlayer {
   tossup_model?: string;
   bonus_model?: string;
   default_buzzer_key?: string;
-  skill_level?: string;
+  weight_class?: AIWeightClass;
   team?: string;
 }
 
@@ -76,10 +83,16 @@ interface DatasetInfo {
 
   // Rosters
   hasAiRoster: boolean;
+  hasAiTossupRoster: boolean;
+  hasAiBonusRoster: boolean;
   hasHumanRoster: boolean;
   aiRosterFile?: string;
+  aiTossupRosterFile?: string;
+  aiBonusRosterFile?: string;
   humanRosterFile?: string;
   aiPlayers?: RosterPlayer[];
+  tossupRoster?: ModelRosterEntry[];
+  bonusRoster?: ModelRosterEntry[];
   humanPlayers?: RosterPlayer[];
 
   // Validation
@@ -119,14 +132,15 @@ function loadRoster(filePath: string): RosterPlayer[] {
       relax_column_count: true,
     });
 
-    return records.map((record: any) => ({
+    return records.map((record: Record<string, string>) => ({
       player_id: record.player_id || '',
       name: record.name || '',
       type: record.type === 'ai' ? 'ai' : 'human',
       tossup_model: record.tossup_model || undefined,
       bonus_model: record.bonus_model || undefined,
       default_buzzer_key: record.default_buzzer_key || undefined,
-      skill_level: record.skill_level || undefined,
+      weight_class:
+        record.type === 'ai' ? normalizeWeightClass(record.weight_class) : undefined,
       team: record.team || undefined,
     }));
   } catch {
@@ -241,34 +255,86 @@ function validateDataset(info: Partial<DatasetInfo>): ValidationIssue[] {
     });
   }
 
-  // Check AI roster vs available models
-  if (info.aiPlayers && info.aiPlayers.length > 0 && info.models) {
-    const availableModels = new Set(info.models.map(m => m.name));
+  // Check phase-specific model rosters vs available response files.
+  const validateRosterEntries = (
+    entries: ModelRosterEntry[] | undefined,
+    phase: 'tossup' | 'bonus',
+    rosterLabel: string
+  ) => {
+    if (!entries || entries.length === 0 || !info.models) return;
+    const modelByName = new Map(info.models.map((m) => [m.name, m]));
+    const datasetHasBonuses = !!info.hasBonuses;
 
-    for (const player of info.aiPlayers) {
-      if (player.tossup_model && !availableModels.has(player.tossup_model)) {
-        issues.push({
-          type: 'error',
-          message: `Missing tossup responses for "${player.name}"`,
-          details: `Model "${player.tossup_model}" not found in responses directory. Expected file: ${player.tossup_model}.buzz.csv`,
-        });
-      }
-      if (player.bonus_model && !availableModels.has(player.bonus_model)) {
+    for (const entry of entries) {
+      if (!entry.weight_class) {
         issues.push({
           type: 'warning',
-          message: `Missing bonus responses for "${player.name}"`,
-          details: `Model "${player.bonus_model}" not found. Expected file: ${player.bonus_model}.bonus.csv`,
+          message: `Missing or invalid weight_class for "${entry.name}"`,
+          details: `${rosterLabel} entry "${entry.id}" must specify lightweight, midweight, or heavyweight`,
         });
+      }
+
+      const model = modelByName.get(entry.model);
+      const hasCapability =
+        phase === 'tossup' ? model?.hasTossupResponses : model?.hasBonusResponses;
+      if (!model || !hasCapability) {
+        const fileSuffix = phase === 'tossup' ? '.buzz.csv' : '.bonus.csv';
+        issues.push({
+          type: phase === 'bonus' && !datasetHasBonuses ? 'warning' : 'error',
+          message: `Missing ${phase} responses for "${entry.name}"`,
+          details: `${rosterLabel} entry "${entry.id}" references model "${entry.model}" with no ${phase} responses. Expected file: ${entry.model}${fileSuffix}`,
+        });
+      }
+    }
+  };
+
+  validateRosterEntries(info.tossupRoster, 'tossup', 'Tossup roster');
+  validateRosterEntries(info.bonusRoster, 'bonus', 'Bonus roster');
+
+  // Validate legacy ai_roster preset teammates against response files.
+  if (info.aiPlayers && info.aiPlayers.length > 0 && info.models) {
+    const modelByName = new Map(info.models.map((m) => [m.name, m]));
+    const datasetHasBonuses = !!info.hasBonuses;
+
+    for (const player of info.aiPlayers) {
+      if (player.type !== 'ai') continue;
+
+      if (player.tossup_model) {
+        const model = modelByName.get(player.tossup_model);
+        if (!model || !model.hasTossupResponses) {
+          issues.push({
+            type: 'error',
+            message: `Missing tossup responses for preset "${player.name}"`,
+            details: `ai_roster.csv: model "${player.tossup_model}" has no tossup responses. Expected file: ${player.tossup_model}.buzz.csv`,
+          });
+        }
+      }
+      if (player.bonus_model) {
+        const model = modelByName.get(player.bonus_model);
+        if (!model || !model.hasBonusResponses) {
+          issues.push({
+            type: datasetHasBonuses ? 'error' : 'warning',
+            message: `Missing bonus responses for preset "${player.name}"`,
+            details: `ai_roster.csv: model "${player.bonus_model}" has no bonus responses. Expected file: ${player.bonus_model}.bonus.csv`,
+          });
+        }
       }
     }
   }
 
   // Check for AI roster if AI models exist but no roster
-  if (info.models && info.models.length > 0 && !info.hasAiRoster) {
+  if (
+    info.models &&
+    info.models.length > 0 &&
+    !info.hasAiRoster &&
+    !info.hasAiTossupRoster &&
+    !info.hasAiBonusRoster
+  ) {
     issues.push({
       type: 'warning',
       message: 'No AI roster file found',
-      details: 'Create ai_roster.csv to define AI player names and their model assignments',
+      details:
+        'Create ai_tossup_roster.csv and ai_bonus_roster.csv (or legacy ai_roster.csv) to define AI model catalogs',
     });
   }
 
@@ -292,6 +358,8 @@ function scanDirectory(dirPath: string, id: string): DatasetInfo | null {
     hasBonuses: false,
     models: [],
     hasAiRoster: false,
+    hasAiTossupRoster: false,
+    hasAiBonusRoster: false,
     hasHumanRoster: false,
     validationIssues: [],
     isValid: true,
@@ -341,6 +409,42 @@ function scanDirectory(dirPath: string, id: string): DatasetInfo | null {
     info.hasAiRoster = true;
     info.aiRosterFile = path.join(dirPath, 'ai_roster.csv');
     info.aiPlayers = loadRoster(info.aiRosterFile);
+  }
+
+  if (files.includes('ai_tossup_roster.csv')) {
+    info.hasAiTossupRoster = true;
+    info.aiTossupRosterFile = path.join(dirPath, 'ai_tossup_roster.csv');
+    info.tossupRoster = readModelRosterFile(info.aiTossupRosterFile);
+  }
+
+  if (files.includes('ai_bonus_roster.csv')) {
+    info.hasAiBonusRoster = true;
+    info.aiBonusRosterFile = path.join(dirPath, 'ai_bonus_roster.csv');
+    info.bonusRoster = readModelRosterFile(info.aiBonusRosterFile);
+  }
+
+  // Derive phase rosters from legacy combined roster when dedicated files are absent.
+  if (info.aiPlayers && info.aiPlayers.length > 0) {
+    if (!info.tossupRoster?.length) {
+      info.tossupRoster = tossupEntriesFromLegacyAiRoster(
+        info.aiPlayers.filter((p) => p.type === 'ai') as Array<{
+          player_id: string;
+          name: string;
+          tossup_model?: string;
+          bonus_model?: string;
+        }>
+      );
+    }
+    if (!info.bonusRoster?.length) {
+      info.bonusRoster = bonusEntriesFromLegacyAiRoster(
+        info.aiPlayers.filter((p) => p.type === 'ai') as Array<{
+          player_id: string;
+          name: string;
+          tossup_model?: string;
+          bonus_model?: string;
+        }>
+      );
+    }
   }
 
   if (files.includes('human_roster.csv')) {
@@ -606,7 +710,9 @@ datasetsRouter.get('/help/structure', (_req, res) => {
 dataset_name/
 ├── tossups.csv          # Required: Tossup questions
 ├── bonuses.csv          # Optional: Bonus questions
-├── ai_roster.csv        # Optional: AI player definitions
+├── ai_tossup_roster.csv # Optional: tossup model catalog (id, name, model)
+├── ai_bonus_roster.csv  # Optional: bonus model catalog (id, name, model)
+├── ai_roster.csv        # Optional: legacy combined AI player definitions
 ├── human_roster.csv     # Optional: Human player definitions
 └── responses/           # Required for AI players
     ├── model-name.buzz.csv    # Tossup responses
@@ -619,7 +725,9 @@ dataset_name/
         description: 'For multi-packet tournaments with rosters',
         structure: `
 tournament_name/
-├── ai_roster.csv        # AI player definitions with model assignments
+├── ai_tossup_roster.csv # Tossup model catalog (id, name, model)
+├── ai_bonus_roster.csv  # Bonus model catalog (id, name, model)
+├── ai_roster.csv        # Legacy: combined AI player definitions with model assignments
 ├── human_roster.csv     # Human player definitions with team assignments
 ├── packet_1/
 │   ├── tossups.csv
@@ -660,15 +768,27 @@ tournament_name/
         optionalColumns: ['answerline1', 'answerline2', 'answerline3', 'category'],
       },
       ai_roster: {
-        description: 'AI player roster',
+        description: 'Legacy combined AI player roster (preset teammates with model assignments)',
         requiredColumns: ['player_id', 'name', 'type', 'tossup_model', 'bonus_model'],
-        optionalColumns: ['tossup_model_cost', 'description', 'skill_level'],
-        notes: 'Model names must match response file names (without .buzz.csv/.bonus.csv)',
+        optionalColumns: ['weight_class', 'description'],
+        notes: 'Model keys must match response files. Prefer ai_tossup_roster.csv and ai_bonus_roster.csv for model catalogs.',
+      },
+      ai_tossup_roster: {
+        description: 'Tossup model catalog for setup pickers and logging labels',
+        requiredColumns: ['id', 'name', 'model', 'weight_class'],
+        optionalColumns: ['player_id', 'description'],
+        notes: 'model must match a {model}.buzz.csv file in responses/. weight_class: lightweight, midweight, or heavyweight.',
+      },
+      ai_bonus_roster: {
+        description: 'Bonus model catalog for setup pickers and logging labels',
+        requiredColumns: ['id', 'name', 'model', 'weight_class'],
+        optionalColumns: ['player_id', 'description'],
+        notes: 'model must match a {model}.bonus.csv file in responses/. weight_class: lightweight, midweight, or heavyweight.',
       },
       human_roster: {
         description: 'Human player roster',
         requiredColumns: ['player_id', 'name', 'type'],
-        optionalColumns: ['default_buzzer_key', 'team', 'skill_level', 'description'],
+        optionalColumns: ['default_buzzer_key', 'team', 'description'],
       },
       buzz_responses: {
         description: 'AI tossup responses',

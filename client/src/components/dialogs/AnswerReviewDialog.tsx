@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useGame } from '../../context/GameContext';
-import type { AIBuzzMode } from '../../../../shared/types';
+import type { AIBuzzMode, AIPlayerKwargs } from '../../../../shared/types';
+import { tossupModelLabel } from '../../../../shared/modelLabels';
 import { aiTossupPoints } from '../../../../shared/scoring';
 
 export function AnswerReviewDialog() {
@@ -147,6 +148,11 @@ export function AnswerReviewDialog() {
             </span>{' '}
             <span className="text-gray-600">[{teamName}]</span> buzzed 🛎️
           </p>
+          {!isHuman && (
+            <p className="text-sm text-gray-500 mt-1">
+              Tossup model: {tossupModelLabel(buzzingPlayer.extra_kwargs as AIPlayerKwargs)}
+            </p>
+          )}
         </div>
 
         {/* Answer display/input */}

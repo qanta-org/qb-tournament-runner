@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useGame, TournamentContext } from '../../context/GameContext';
 import { TeamBuilder } from '../setup/TeamBuilder';
-import type { GameConfig, Team, Player } from '../../../../shared/types';
+import type { GameConfig, ModelInfo, Team, Player } from '../../../../shared/types';
 
 interface TournamentGameSetupProps {
   tournamentContext: TournamentContext;
@@ -41,7 +41,7 @@ export function TournamentGameSetup({ tournamentContext }: TournamentGameSetupPr
   }, [gameConfig]);
 
   // Available models from the config's model directory
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   useEffect(() => {
     if (!gameConfig?.model_directory) return;
     fetch('/api/datasets/list')
@@ -49,7 +49,7 @@ export function TournamentGameSetup({ tournamentContext }: TournamentGameSetupPr
       .then((data) => {
         const ds = data.datasets?.find((d: any) => d.responsesDir === gameConfig.model_directory || d.path === gameConfig.model_directory);
         if (ds?.models) {
-          setAvailableModels(ds.models.map((m: any) => m.name));
+          setAvailableModels(ds.models as ModelInfo[]);
         }
       })
       .catch(() => { });

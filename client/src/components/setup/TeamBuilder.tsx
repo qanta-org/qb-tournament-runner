@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import type { Team, Player, PlayerType } from '../../../../shared/types';
+import type { AIPlayerKwargs, ModelInfo, ModelRosterEntry, Team, Player, PlayerType } from '../../../../shared/types';
+import { aiModelSummary } from '../../../../shared/modelLabels';
 import type { ApiRosterPlayer } from '../../api/rosters';
+import { fetchBonusModelRoster, fetchTossupModelRoster } from '../../api/rosters';
 
 type RosterPlayer = ApiRosterPlayer;
 
@@ -9,10 +11,336 @@ interface TeamBuilderProps {
   onChange: (team: Team) => void;
   teamLabel: string;
   teamColor: string;
-  availableModels?: string[];
+  availableModels?: ModelInfo[];
   datasetId?: string; // For loading dataset-specific rosters
   excludedPlayerIds?: string[]; // Player IDs already on the other team
   allUsedBuzzerKeys?: Map<string, string>; // All buzzer keys -> player_id mapping
+}
+
+/**
+ * Derive the tossup/bonus/coupled model pools from a dataset's model capabilities.
+ * Coupled models must serve both phases (unless the dataset exposes no bonus models
+ * at all, in which case tossup-only is acceptable).
+ */
+export function deriveModelPools(availableModels: ModelInfo[]) {
+  const hasModelInfo = availableModels.length > 0;
+  const allModelNames = availableModels.map((m) => m.name);
+  const tossupModelNames = availableModels.filter((m) => m.hasTossupResponses).map((m) => m.name);
+  const bonusModelNames = availableModels.filter((m) => m.hasBonusResponses).map((m) => m.name);
+  const datasetHasBonusModels = bonusModelNames.length > 0;
+  const coupledModelNames = datasetHasBonusModels
+    ? availableModels.filter((m) => m.hasTossupResponses && m.hasBonusResponses).map((m) => m.name)
+    : tossupModelNames;
+  return { hasModelInfo, allModelNames, tossupModelNames, bonusModelNames, coupledModelNames };
+}
+
+/** Roster entries whose model key exists in both tossup and bonus catalogs. */
+export function coupledRosterEntries(
+  tossupRoster: ModelRosterEntry[],
+  bonusRoster: ModelRosterEntry[]
+): ModelRosterEntry[] {
+  const bonusModels = new Set(bonusRoster.map((e) => e.model));
+  return tossupRoster.filter((e) => bonusModels.has(e.model));
+}
+
+/**
+ * Whether the dataset supports a single shared response key for both phases.
+ * Coupled UI is only shown when at least one model serves tossups and bonuses
+ * under the same key.
+ */
+export function canUseCoupledMode(
+  tossupRoster: ModelRosterEntry[],
+  bonusRoster: ModelRosterEntry[],
+  coupledModelNames: string[]
+): boolean {
+  return coupledRosterEntries(tossupRoster, bonusRoster).length > 0 || coupledModelNames.length > 0;
+}
+
+/** Whether an AI player's tossup/bonus models should use the coupled picker in the UI. */
+export function isPlayerCoupled(
+  kwargs: Partial<AIPlayerKwargs>,
+  canCouple = true
+): boolean {
+  if (!canCouple) return false;
+  // Distinct keys always use decoupled pickers, even if coupled was persisted.
+  if (
+    kwargs.tossup_model &&
+    kwargs.bonus_model &&
+    kwargs.tossup_model !== kwargs.bonus_model
+  ) {
+    return false;
+  }
+  if (typeof kwargs.coupled === 'boolean') return kwargs.coupled;
+  return !kwargs.bonus_model || kwargs.bonus_model === kwargs.tossup_model;
+}
+
+/**
+ * Build AI player kwargs from a legacy combined roster CSV entry.
+ */
+export function buildAiKwargsFromRoster(
+  rosterPlayer: RosterPlayer,
+  tossupRoster: ModelRosterEntry[],
+  bonusRoster: ModelRosterEntry[]
+): AIPlayerKwargs {
+  const tossup_model = rosterPlayer.tossup_model || '';
+  const bonusRaw = rosterPlayer.bonus_model?.trim();
+  const bonus_model = bonusRaw && bonusRaw !== tossup_model ? bonusRaw : tossup_model;
+  const hasDistinctBonus = bonus_model !== tossup_model;
+  const tossupEntry = tossupRoster.find((e) => e.model === tossup_model);
+  const bonusEntry = bonusRoster.find((e) => e.model === bonus_model);
+  return {
+    tossup_model,
+    bonus_model,
+    tossup_model_name: tossupEntry?.name ?? rosterPlayer.name,
+    bonus_model_name: bonusEntry?.name ?? (hasDistinctBonus ? rosterPlayer.name : tossupEntry?.name ?? rosterPlayer.name),
+    coupled: !hasDistinctBonus,
+    tossup_weight_class: tossupEntry?.weight_class ?? rosterPlayer.weight_class,
+    bonus_weight_class: bonusEntry?.weight_class ?? rosterPlayer.weight_class,
+  };
+}
+
+/**
+ * Model picker backed by a phase roster when available; falls back to raw response
+ * file names from the dataset scan.
+ */
+export function RosterModelSelect({
+  value,
+  onChange,
+  entries,
+  fallbackOptions,
+  allModelNames,
+  hasModelInfo,
+  emptyLabel,
+  placeholder,
+}: {
+  value: string;
+  onChange: (modelKey: string, entry?: ModelRosterEntry) => void;
+  entries: ModelRosterEntry[];
+  fallbackOptions: string[];
+  allModelNames: string[];
+  hasModelInfo: boolean;
+  emptyLabel: string;
+  placeholder: string;
+}) {
+  if (entries.length > 0) {
+    const knownModels = new Set(entries.map((e) => e.model));
+    const notFound = !!value && !knownModels.has(value);
+    return (
+      <select
+        value={value}
+        onChange={(e) => {
+          const modelKey = e.target.value;
+          const entry = entries.find((x) => x.model === modelKey);
+          onChange(modelKey, entry);
+        }}
+        className="input"
+      >
+        <option value="">{emptyLabel}</option>
+        {notFound && <option value={value}>{value} (not found)</option>}
+        {entries.map((entry) => (
+          <option key={entry.id} value={entry.model}>
+            {entry.name}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  return (
+    <ModelSelect
+      value={value}
+      onChange={(v) => onChange(v)}
+      options={fallbackOptions}
+      allModelNames={allModelNames}
+      hasModelInfo={hasModelInfo}
+      emptyLabel={emptyLabel}
+      placeholder={placeholder}
+    />
+  );
+}
+
+/**
+ * A model picker that renders a dropdown when dataset model info is available, or
+ * a free-text input otherwise. Surfaces a "(not found)" option when the current
+ * value is not among the available models so the selection stays visible.
+ */
+export function ModelSelect({
+  value,
+  onChange,
+  options,
+  allModelNames,
+  hasModelInfo,
+  emptyLabel,
+  placeholder,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  allModelNames: string[];
+  hasModelInfo: boolean;
+  emptyLabel: string;
+  placeholder: string;
+}) {
+  if (!hasModelInfo) {
+    return (
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="input"
+      />
+    );
+  }
+
+  const notFound = !!value && !allModelNames.includes(value);
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className="input">
+      <option value="">{emptyLabel}</option>
+      {notFound && <option value={value}>{value} (not found)</option>}
+      {options.map((model) => (
+        <option key={model} value={model}>
+          {model}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/**
+ * Inline editor for an AI player's tossup/bonus models shown in the team list.
+ * Supports the coupled/decoupled toggle and surfaces both models.
+ */
+export function AiModelEditor({
+  kwargs,
+  hasModelInfo,
+  allModelNames,
+  tossupModelNames,
+  bonusModelNames,
+  coupledModelNames,
+  tossupRoster,
+  bonusRoster,
+  onChange,
+}: {
+  kwargs: AIPlayerKwargs;
+  hasModelInfo: boolean;
+  allModelNames: string[];
+  tossupModelNames: string[];
+  bonusModelNames: string[];
+  coupledModelNames: string[];
+  tossupRoster: ModelRosterEntry[];
+  bonusRoster: ModelRosterEntry[];
+  onChange: (next: Partial<AIPlayerKwargs>) => void;
+}) {
+  const coupledEntries = coupledRosterEntries(tossupRoster, bonusRoster);
+  const canCouple = canUseCoupledMode(tossupRoster, bonusRoster, coupledModelNames);
+  const coupled = isPlayerCoupled(kwargs, canCouple);
+  const useRosterCoupled = coupledEntries.length > 0;
+
+  return (
+    <div className="space-y-1 mt-1">
+      {canCouple && (
+        <label className="flex items-center gap-1 text-[11px] text-gray-500">
+          <input
+            type="checkbox"
+            checked={coupled}
+            onChange={(e) =>
+              onChange(
+                e.target.checked
+                  ? {
+                      coupled: true,
+                      bonus_model: kwargs.tossup_model,
+                      bonus_model_name: kwargs.tossup_model_name,
+                      bonus_weight_class:
+                        bonusRoster.find((e) => e.model === kwargs.tossup_model)?.weight_class ??
+                        kwargs.tossup_weight_class,
+                    }
+                  : { coupled: false }
+              )
+            }
+            className="w-3 h-3"
+          />
+          Same model for both
+        </label>
+      )}
+      {coupled && canCouple ? (
+        <RosterModelSelect
+          value={kwargs.tossup_model}
+          onChange={(modelKey, entry) => {
+            if (entry && useRosterCoupled) {
+              const bonusEntry = bonusRoster.find((e) => e.model === modelKey);
+              onChange({
+                tossup_model: modelKey,
+                bonus_model: modelKey,
+                tossup_model_name: entry.name,
+                bonus_model_name: bonusEntry?.name ?? entry.name,
+                tossup_weight_class: entry.weight_class ?? kwargs.tossup_weight_class,
+                bonus_weight_class: bonusEntry?.weight_class ?? entry.weight_class ?? kwargs.bonus_weight_class,
+                coupled: true,
+              });
+            } else {
+              onChange({
+                tossup_model: modelKey,
+                bonus_model: modelKey,
+                tossup_model_name: entry?.name,
+                bonus_model_name: entry?.name,
+                tossup_weight_class: entry?.weight_class ?? kwargs.tossup_weight_class,
+                bonus_weight_class: entry?.weight_class ?? kwargs.bonus_weight_class,
+                coupled: true,
+              });
+            }
+          }}
+          entries={useRosterCoupled ? coupledEntries : []}
+          fallbackOptions={coupledModelNames}
+          allModelNames={allModelNames}
+          hasModelInfo={hasModelInfo}
+          emptyLabel="Select model..."
+          placeholder="Model name"
+        />
+      ) : (
+        <>
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] text-gray-400 w-3" title="Tossup model">T</span>
+            <RosterModelSelect
+              value={kwargs.tossup_model}
+              onChange={(modelKey, entry) =>
+                onChange({
+                  tossup_model: modelKey,
+                  tossup_model_name: entry?.name,
+                  tossup_weight_class: entry?.weight_class ?? kwargs.tossup_weight_class,
+                })
+              }
+              entries={tossupRoster}
+              fallbackOptions={tossupModelNames}
+              allModelNames={allModelNames}
+              hasModelInfo={hasModelInfo}
+              emptyLabel="Tossup model..."
+              placeholder="Tossup model"
+            />
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] text-gray-400 w-3" title="Bonus model">B</span>
+            <RosterModelSelect
+              value={kwargs.bonus_model}
+              onChange={(modelKey, entry) =>
+                onChange({
+                  bonus_model: modelKey,
+                  bonus_model_name: entry?.name,
+                  bonus_weight_class: entry?.weight_class ?? kwargs.bonus_weight_class,
+                })
+              }
+              entries={bonusRoster}
+              fallbackOptions={bonusModelNames}
+              allModelNames={allModelNames}
+              hasModelInfo={hasModelInfo}
+              emptyLabel="Bonus model..."
+              placeholder="Bonus model"
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 export function TeamBuilder({ 
@@ -27,6 +355,8 @@ export function TeamBuilder({
 }: TeamBuilderProps) {
   const [aiRoster, setAiRoster] = useState<RosterPlayer[]>([]);
   const [humanRoster, setHumanRoster] = useState<RosterPlayer[]>([]);
+  const [tossupRoster, setTossupRoster] = useState<ModelRosterEntry[]>([]);
+  const [bonusRoster, setBonusRoster] = useState<ModelRosterEntry[]>([]);
   const [rosterSource, setRosterSource] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -39,22 +369,37 @@ export function TeamBuilder({
   const [customBuzzerKey, setCustomBuzzerKey] = useState('');
   const [customTossupModel, setCustomTossupModel] = useState('');
   const [customBonusModel, setCustomBonusModel] = useState('');
+  // Whether the custom AI player's tossup/bonus models are coupled (one choice
+  // drives both). Defaults to coupled when the dataset supports it.
+  const [customCoupled, setCustomCoupled] = useState(true);
 
   // Multi-select state for roster
   const [selectedRosterPlayers, setSelectedRosterPlayers] = useState<Set<string>>(new Set());
+
+  const { hasModelInfo, allModelNames, tossupModelNames, bonusModelNames, coupledModelNames } =
+    deriveModelPools(availableModels);
 
   // Load rosters on mount or when dataset changes
   useEffect(() => {
     loadRosters();
   }, [datasetId]);
 
+  // Decoupled pickers are the only option when no model key serves both phases.
+  useEffect(() => {
+    if (!canUseCoupledMode(tossupRoster, bonusRoster, coupledModelNames)) {
+      setCustomCoupled(false);
+    }
+  }, [tossupRoster, bonusRoster, coupledModelNames]);
+
   const loadRosters = async () => {
     setLoading(true);
     try {
       const queryParam = datasetId ? `?dataset=${encodeURIComponent(datasetId)}` : '';
-      const [aiRes, humanRes] = await Promise.all([
+      const [aiRes, humanRes, tossupData, bonusData] = await Promise.all([
         fetch(`/api/rosters/ai${queryParam}`),
         fetch(`/api/rosters/human${queryParam}`),
+        fetchTossupModelRoster(datasetId),
+        fetchBonusModelRoster(datasetId),
       ]);
 
       if (aiRes.ok) {
@@ -66,6 +411,8 @@ export function TeamBuilder({
         const data = await humanRes.json();
         setHumanRoster(data.players || []);
       }
+      setTossupRoster(tossupData.entries || []);
+      setBonusRoster(bonusData.entries || []);
     } catch (err) {
       console.error('Failed to load rosters:', err);
     } finally {
@@ -97,11 +444,7 @@ export function TeamBuilder({
       type: rosterPlayer.type,
       extra_kwargs: rosterPlayer.type === 'human'
         ? { buzzer_key: rosterPlayer.default_buzzer_key || nextKey }
-        : {
-            tossup_model: rosterPlayer.tossup_model || '',
-            bonus_model: rosterPlayer.bonus_model || rosterPlayer.tossup_model || '',
-            weight_class: rosterPlayer.weight_class,
-          },
+        : buildAiKwargsFromRoster(rosterPlayer, tossupRoster, bonusRoster),
     };
 
     onChange({
@@ -154,11 +497,7 @@ export function TeamBuilder({
         type: rosterPlayer.type,
         extra_kwargs: rosterPlayer.type === 'human'
           ? { buzzer_key: rosterPlayer.default_buzzer_key || getKey() }
-          : {
-              tossup_model: rosterPlayer.tossup_model || '',
-              bonus_model: rosterPlayer.bonus_model || rosterPlayer.tossup_model || '',
-              weight_class: rosterPlayer.weight_class,
-            },
+          : buildAiKwargsFromRoster(rosterPlayer, tossupRoster, bonusRoster),
       });
     }
 
@@ -186,15 +525,34 @@ export function TeamBuilder({
     if (!customName.trim()) return;
 
     const playerId = `custom_${Date.now()}`;
+    const tossupEntry = tossupRoster.find((e) => e.model === customTossupModel);
+    const bonusModelKey = customCoupled ? customTossupModel : customBonusModel;
+    const bonusEntry = bonusRoster.find((e) => e.model === bonusModelKey);
+
     const newPlayer: Player = {
       player_id: playerId,
       name: customName.trim(),
       type: customType,
       extra_kwargs: customType === 'human'
         ? { buzzer_key: customBuzzerKey || getNextBuzzerKey() }
+        : customCoupled
+        ? {
+            tossup_model: customTossupModel,
+            bonus_model: customTossupModel,
+            tossup_model_name: tossupEntry?.name,
+            bonus_model_name: bonusEntry?.name ?? tossupEntry?.name,
+            coupled: true,
+            tossup_weight_class: tossupEntry?.weight_class,
+            bonus_weight_class: bonusEntry?.weight_class ?? tossupEntry?.weight_class,
+          }
         : {
             tossup_model: customTossupModel,
-            bonus_model: customBonusModel || customTossupModel,
+            bonus_model: customBonusModel,
+            tossup_model_name: tossupEntry?.name,
+            bonus_model_name: bonusEntry?.name,
+            coupled: false,
+            tossup_weight_class: tossupEntry?.weight_class,
+            bonus_weight_class: bonusEntry?.weight_class,
           },
     };
 
@@ -208,6 +566,7 @@ export function TeamBuilder({
     setCustomBuzzerKey('');
     setCustomTossupModel('');
     setCustomBonusModel('');
+    setCustomCoupled(true);
     setShowAddDialog(false);
   };
 
@@ -252,6 +611,21 @@ export function TeamBuilder({
 
   const filteredRoster = getFilteredRoster();
 
+  const coupledEntries = coupledRosterEntries(tossupRoster, bonusRoster);
+  const canCoupleModels = canUseCoupledMode(tossupRoster, bonusRoster, coupledModelNames);
+
+  /** Update an AI player's model fields (and coupling) in one shot. */
+  const updateAiPlayerModels = (playerId: string, next: Partial<AIPlayerKwargs>) => {
+    onChange({
+      ...team,
+      players: team.players.map((p) =>
+        p.player_id === playerId
+          ? { ...p, extra_kwargs: { ...(p.extra_kwargs as AIPlayerKwargs), ...next } }
+          : p
+      ),
+    });
+  };
+
   return (
     <div className="border-2 rounded-lg p-4" style={{ borderColor: teamColor }}>
       {/* Team header */}
@@ -285,6 +659,11 @@ export function TeamBuilder({
               </span>
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-sm truncate">{player.name}</div>
+                {player.type === 'ai' && (
+                  <div className="text-[11px] text-gray-400 truncate">
+                    {aiModelSummary(player.extra_kwargs as AIPlayerKwargs)}
+                  </div>
+                )}
                 {player.type === 'human' ? (
                   (() => {
                     const currentKey = (player.extra_kwargs as { buzzer_key?: string })?.buzzer_key || '';
@@ -307,18 +686,17 @@ export function TeamBuilder({
                     );
                   })()
                 ) : (
-                  <div className="text-xs truncate">
-                    {(() => {
-                      const model = (player.extra_kwargs as { tossup_model?: string })?.tossup_model;
-                      const modelExists = !model || availableModels.length === 0 || availableModels.includes(model);
-                      return (
-                        <span className={modelExists ? 'text-gray-500' : 'text-red-500 font-medium'}>
-                          {model || 'No model'}
-                          {model && !modelExists && ' ⚠️ Not found'}
-                        </span>
-                      );
-                    })()}
-                  </div>
+                  <AiModelEditor
+                    kwargs={player.extra_kwargs as AIPlayerKwargs}
+                    hasModelInfo={hasModelInfo}
+                    allModelNames={allModelNames}
+                    tossupModelNames={tossupModelNames}
+                    bonusModelNames={bonusModelNames}
+                    coupledModelNames={coupledModelNames}
+                    tossupRoster={tossupRoster}
+                    bonusRoster={bonusRoster}
+                    onChange={(next) => updateAiPlayerModels(player.player_id, next)}
+                  />
                 )}
               </div>
               <button
@@ -494,7 +872,9 @@ export function TeamBuilder({
                                 <div className="font-medium text-sm">{player.name}</div>
                                 {player.type === 'ai' ? (
                                   <div className="text-xs text-gray-500 truncate">
-                                    {player.tossup_model}
+                                    {aiModelSummary(
+                                      buildAiKwargsFromRoster(player, tossupRoster, bonusRoster)
+                                    )}
                                   </div>
                                 ) : (
                                   <div className="text-xs text-gray-500">
@@ -503,11 +883,6 @@ export function TeamBuilder({
                                   </div>
                                 )}
                               </div>
-                              {player.skill_level && (
-                                <span className="text-xs bg-gray-100 px-2 py-1 rounded">
-                                  {player.skill_level}
-                                </span>
-                              )}
                             </div>
                           );
                         })}
@@ -591,69 +966,90 @@ export function TeamBuilder({
                     </div>
                   ) : (
                     <>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Tossup Model *
-                        </label>
-                        {availableModels.length > 0 ? (
-                          <select
-                            value={customTossupModel}
+                      {canCoupleModels && (
+                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                          <input
+                            type="checkbox"
+                            checked={customCoupled}
                             onChange={(e) => {
-                              setCustomTossupModel(e.target.value);
-                              if (!customBonusModel) setCustomBonusModel(e.target.value);
+                              const coupled = e.target.checked;
+                              setCustomCoupled(coupled);
+                              if (coupled) setCustomBonusModel(customTossupModel);
                             }}
-                            className="input"
-                          >
-                            <option value="">Select model...</option>
-                            {availableModels.map((model) => (
-                              <option key={model} value={model}>
-                                {model}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <input
-                            type="text"
-                            value={customTossupModel}
-                            onChange={(e) => setCustomTossupModel(e.target.value)}
-                            placeholder="Model name (e.g., gpt-4o)"
-                            className="input"
+                            className="w-4 h-4 text-blue-600"
                           />
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Bonus Model
+                          Use the same model for tossups and bonuses
                         </label>
-                        {availableModels.length > 0 ? (
-                          <select
-                            value={customBonusModel}
-                            onChange={(e) => setCustomBonusModel(e.target.value)}
-                            className="input"
-                          >
-                            <option value="">Same as tossup model</option>
-                            {availableModels.map((model) => (
-                              <option key={model} value={model}>
-                                {model}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <input
-                            type="text"
-                            value={customBonusModel}
-                            onChange={(e) => setCustomBonusModel(e.target.value)}
-                            placeholder="Leave empty to use tossup model"
-                            className="input"
+                      )}
+
+                      {customCoupled && canCoupleModels ? (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Model *
+                          </label>
+                          <RosterModelSelect
+                            value={customTossupModel}
+                            onChange={(modelKey) => {
+                              setCustomTossupModel(modelKey);
+                              setCustomBonusModel(modelKey);
+                            }}
+                            entries={coupledEntries.length > 0 ? coupledEntries : []}
+                            fallbackOptions={coupledModelNames}
+                            allModelNames={allModelNames}
+                            hasModelInfo={hasModelInfo}
+                            emptyLabel="Select model..."
+                            placeholder="Model name (e.g., gpt-4o)"
                           />
-                        )}
-                      </div>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Used for both tossups and bonuses.
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Tossup Model *
+                            </label>
+                            <RosterModelSelect
+                              value={customTossupModel}
+                              onChange={(modelKey) => setCustomTossupModel(modelKey)}
+                              entries={tossupRoster}
+                              fallbackOptions={tossupModelNames}
+                              allModelNames={allModelNames}
+                              hasModelInfo={hasModelInfo}
+                              emptyLabel="Select tossup model..."
+                              placeholder="Tossup model name"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Bonus Model *
+                            </label>
+                            <RosterModelSelect
+                              value={customBonusModel}
+                              onChange={(modelKey) => setCustomBonusModel(modelKey)}
+                              entries={bonusRoster}
+                              fallbackOptions={bonusModelNames}
+                              allModelNames={allModelNames}
+                              hasModelInfo={hasModelInfo}
+                              emptyLabel="Select bonus model..."
+                              placeholder="Bonus model name"
+                            />
+                          </div>
+                        </>
+                      )}
                     </>
                   )}
 
                   <button
                     onClick={addCustomPlayer}
-                    disabled={!customName.trim() || (customType === 'ai' && !customTossupModel)}
+                    disabled={
+                      !customName.trim() ||
+                      (customType === 'ai' &&
+                        (customCoupled
+                          ? !customTossupModel
+                          : !customTossupModel || !customBonusModel))
+                    }
                     className="btn btn-primary w-full"
                   >
                     Add Player

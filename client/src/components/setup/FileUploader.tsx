@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import type { ModelInfo } from '../../../../shared/types';
 
 // ============================================================================
 // Types
@@ -11,12 +12,6 @@ interface PacketInfo {
   bonusFile?: string;
   tossupCount?: number;
   bonusCount?: number;
-}
-
-interface ModelInfo {
-  name: string;
-  hasTossupResponses: boolean;
-  hasBonusResponses: boolean;
 }
 
 interface RosterPlayer {
@@ -63,7 +58,7 @@ interface FileUploaderProps {
     tossupFile: string;
     bonusFile: string;
     modelDirectory: string;
-  }, models?: string[], datasetId?: string) => void;
+  }, models?: ModelInfo[], datasetId?: string) => void;
 }
 
 // ============================================================================
@@ -189,7 +184,7 @@ export function FileUploader({ files, onChange }: FileUploaderProps) {
           bonusFile: dataset.bonusFile || '',
           modelDirectory: dataset.responsesDir || '',
         },
-        dataset.models.map(m => m.name),
+        dataset.models,
         dataset.id
       );
     }
@@ -203,7 +198,7 @@ export function FileUploader({ files, onChange }: FileUploaderProps) {
         bonusFile: packet.bonusFile || '',
         modelDirectory: dataset.responsesDir || '',
       },
-      dataset.models.map(m => m.name),
+      dataset.models,
       dataset.id
     );
   };
@@ -297,6 +292,8 @@ export function FileUploader({ files, onChange }: FileUploaderProps) {
 {`dataset_name/
 ├── tossups.csv
 ├── bonuses.csv (optional)
+├── ai_tossup_roster.csv
+├── ai_bonus_roster.csv
 └── responses/
     ├── model.buzz.csv
     └── model.bonus.csv`}
@@ -306,7 +303,9 @@ export function FileUploader({ files, onChange }: FileUploaderProps) {
               <p className="font-medium text-blue-700 mb-1">Tournament Format</p>
               <pre className="bg-blue-100 rounded p-2 text-xs overflow-x-auto">
 {`tournament/
-├── ai_roster.csv
+├── ai_tossup_roster.csv
+├── ai_bonus_roster.csv
+├── ai_roster.csv          # optional legacy presets
 ├── human_roster.csv
 ├── packet_1/
 │   ├── tossups.csv
@@ -314,12 +313,13 @@ export function FileUploader({ files, onChange }: FileUploaderProps) {
 │   ├── img/
 │   └── audio/
 └── responses/
-    └── Author__model.buzz.csv`}
+    ├── Author__model.buzz.csv
+    └── Author__model.bonus.csv`}
               </pre>
             </div>
           </div>
           <p className="text-xs text-blue-600 mt-2">
-            AI roster model names must match response filenames (e.g., "Author__model" → "Author__model.buzz.csv")
+            AI roster `model` keys must match response filenames (e.g. `Author__model` → `Author__model.buzz.csv`). Use `ai_tossup_roster.csv` and `ai_bonus_roster.csv` for model catalogs with display names and weight classes.
           </p>
         </div>
       )}
@@ -613,7 +613,7 @@ export function FileUploader({ files, onChange }: FileUploaderProps) {
                   <li><code>model.buzz.csv</code> - Tossup responses</li>
                   <li><code>model.bonus.csv</code> - Bonus responses</li>
                 </ul>
-                <p className="mt-2 text-xs">File names must match model names in ai_roster.csv</p>
+                <p className="mt-2 text-xs">Response filenames must match `model` keys in ai_tossup_roster.csv / ai_bonus_roster.csv</p>
               </HelpTooltip>
             </div>
             <input

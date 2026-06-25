@@ -95,7 +95,8 @@ export function buildAutostartGameConfig(params: {
         extra_kwargs: {
           tossup_model: charizard.tossup_model || '',
           bonus_model: charizard.bonus_model || charizard.tossup_model || '',
-          weight_class: charizard.weight_class,
+          tossup_weight_class: charizard.weight_class,
+          bonus_weight_class: charizard.weight_class,
         },
       },
     ],
@@ -117,7 +118,8 @@ export function buildAutostartGameConfig(params: {
         extra_kwargs: {
           tossup_model: snorlax.tossup_model || '',
           bonus_model: snorlax.bonus_model || snorlax.tossup_model || '',
-          weight_class: snorlax.weight_class,
+          tossup_weight_class: snorlax.weight_class,
+          bonus_weight_class: snorlax.weight_class,
         },
       },
     ],
