@@ -36,3 +36,10 @@ export async function fetchBonusModelRoster(datasetId?: string): Promise<ModelRo
   if (!res.ok) return { entries: [], source: 'none' };
   return res.json();
 }
+
+export async function fetchHumanRoster(datasetId?: string): Promise<RosterResponse> {
+  const query = datasetId ? `?dataset=${encodeURIComponent(datasetId)}` : '';
+  const res = await fetch(`/api/rosters/human${query}`);
+  if (!res.ok) return { players: [], source: 'none' };
+  return res.json();
+}

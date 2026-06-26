@@ -53,7 +53,7 @@ interface GameContextValue {
   setAutonomousK: (playerId: string, k: number) => void;
   advanceBonusStage: () => void;
   advanceBonusPart: () => void;
-  revealBonusAi: () => void;
+  revealBonusAi: (initialGuess: string) => void;
   submitBonusPartResult: (data: { decision: BonusPartDecision; correct: boolean; answer: string }) => void;
   clearError: () => void;
 
@@ -266,8 +266,8 @@ export function GameProvider({ children }: GameProviderProps) {
     socket.emit('bonus:next_part');
   }, []);
 
-  const revealBonusAi = useCallback(() => {
-    socket.emit('bonus:reveal_ai');
+  const revealBonusAi = useCallback((initialGuess: string) => {
+    socket.emit('bonus:reveal_ai', { initialGuess });
   }, []);
 
   const submitBonusPartResult = useCallback(

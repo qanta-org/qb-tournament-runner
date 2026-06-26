@@ -317,6 +317,14 @@ export interface GameState {
   fullTossupTokens: TossupToken[] | null;
   revealedTossupTokens: TossupToken[];
 
+  // Asset URLs of every image token in the current tossup. Sent to all clients
+  // (including players) purely so they can warm the browser cache ahead of the
+  // reveal — large packet images otherwise pop in a token late on remote
+  // displays. These are opaque hash-named URLs only; the actual image is still
+  // displayed solely when its token is revealed, and no text/answer/position
+  // information is exposed.
+  tossupImageUrls: string[];
+
   // Current guesses from AI
   currentGuesses: TossupResponse[];
 
@@ -333,6 +341,9 @@ export interface GameState {
   bonusPartDecision: BonusPartDecision;
   // Whether AI responses have been revealed for the current bonus part (consult path)
   bonusAiRevealed: boolean;
+  // The owning team's guess registered at the moment AI was revealed (consult path).
+  // null = AI not yet consulted for this part. Empty string = consulted without a prior guess.
+  bonusInitialGuess: string | null;
 
   // Current bonus part answer (moderator only)
   currentBonusPartAnswer: string | null;
@@ -486,6 +497,8 @@ export interface TossupResponseRecord {
     };
     /** Display name of the tossup model that buzzed (from roster or fallback to model key). */
     tossupModelName?: string;
+    /** Raw system key (response-file identifier) for the tossup model. */
+    tossupModelId?: string;
     position: number;
     guess: string;
     points: number;
@@ -497,6 +510,10 @@ export interface BonusPartRecord {
   teamName: string;
   points: number;
   responses: Record<string, string>;
+  /** Maps display label → raw system key (response-file identifier) for each AI response. */
+  responseIds?: Record<string, string>;
+  /** The team's guess registered before AI was revealed (consult path only). */
+  initialGuess?: string;
   finalGuess?: string;
   decision?: BonusPartDecision;
   aiRevealed?: boolean;
@@ -563,8 +580,9 @@ export interface ClientToServerEvents {
   'bonus:next_part': () => void;
   'bonus:human_response': (responses: Record<string, string>) => void;
   'bonus:final_answer': (answer: string) => void;
-  // QANTA 2026: reveal AI responses for the current bonus part (consult path)
-  'bonus:reveal_ai': () => void;
+  // QANTA 2026: reveal AI responses for the current bonus part (consult path).
+  // Carries the team's current guess so it is registered as the initial guess.
+  'bonus:reveal_ai': (data: { initialGuess: string }) => void;
   // QANTA 2026: submit a per-part result with the chosen decision
   'bonus:part_result': (data: { decision: BonusPartDecision; correct: boolean; answer: string }) => void;
   // QANTA 2026: set a per-AI buzz mode (mute / autonomous / semi)
@@ -610,7 +628,7 @@ export const DEFAULT_GAME_CONFIG: Partial<GameConfig> = {
   tossup_penalty_value: 5,
   tossup_penalty_value_second_team: 0,
   bonus_part_points: 10,
-  multimodal_reveal_lockout_seconds: 5,
+  multimodal_reveal_lockout_seconds: 1,
   ai_tossup_score_factors: {
     lightweight: 1.0,
     midweight: 0.8,
@@ -657,6 +675,7 @@ export function createInitialGameState(): GameState {
     fullTossupText: null,
     fullTossupTokens: null,
     revealedTossupTokens: [],
+    tossupImageUrls: [],
     currentGuesses: [],
     currentBonusNum: 0,
     currentBonusId: null,
@@ -667,6 +686,7 @@ export function createInitialGameState(): GameState {
     bonusResponses: [],
     bonusPartDecision: 'pending',
     bonusAiRevealed: false,
+    bonusInitialGuess: null,
     currentBonusPartAnswer: null,
     scores: { team_a: 0, team_b: 0 },
     aiBuzzModes: {},

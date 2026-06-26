@@ -27,7 +27,7 @@ export function TournamentGameSetup({ tournamentContext }: TournamentGameSetupPr
     defaultPointsValue: gameConfig?.default_points_value ?? 10,
     tossupPenaltyValue: gameConfig?.tossup_penalty_value ?? 5,
     bonusPartPoints: gameConfig?.bonus_part_points ?? 10,
-    multimodalRevealLockoutSeconds: gameConfig?.multimodal_reveal_lockout_seconds ?? 5,
+    multimodalRevealLockoutSeconds: gameConfig?.multimodal_reveal_lockout_seconds ?? 1,
   });
 
   const [step, setStep] = useState<'teams' | 'settings'>('teams');

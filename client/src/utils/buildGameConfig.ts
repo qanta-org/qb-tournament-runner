@@ -42,7 +42,7 @@ export function buildGameConfig({
     multimodal_reveal_lockout_seconds:
       overrides.multimodal_reveal_lockout_seconds ??
       base.multimodal_reveal_lockout_seconds ??
-      5,
+      1,
     ai_tossup_score_factors:
       overrides.ai_tossup_score_factors ??
       base.ai_tossup_score_factors ?? {

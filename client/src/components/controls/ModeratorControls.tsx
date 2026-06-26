@@ -82,6 +82,14 @@ export function ModeratorControls() {
 
   // Handle keyboard shortcuts
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Don't hijack keys (especially Space) while typing in an input/textarea —
+    // otherwise the bonus answer field can't accept spaces.
+    if (
+      e.target instanceof HTMLInputElement ||
+      e.target instanceof HTMLTextAreaElement
+    ) {
+      return;
+    }
     if (e.key === 'ArrowRight' || e.key === ' ') {
       e.preventDefault();
       if (isTossupPhase) {
@@ -192,8 +200,8 @@ export function ModeratorControls() {
               </button>
               <button
                 className="btn btn-secondary"
-                onClick={revealBonusAi}
-                title="Reveal AI responses, then submit for partial credit"
+                onClick={() => revealBonusAi(partAnswer.trim())}
+                title="Register the team's current guess, then reveal AI responses for partial credit"
               >
                 🤖 See AI responses
               </button>
@@ -218,6 +226,16 @@ export function ModeratorControls() {
               <span className="text-xs text-gray-500 w-full">
                 AI revealed — team submits a final answer for partial credit, or abstains:
               </span>
+              {gameState.bonusInitialGuess !== null && (
+                <span className="text-xs text-gray-600 w-full">
+                  Initial guess (before AI):{' '}
+                  <span className="font-medium">
+                    {gameState.bonusInitialGuess.trim() === ''
+                      ? '(none)'
+                      : `"${gameState.bonusInitialGuess}"`}
+                  </span>
+                </span>
+              )}
               <button
                 className="btn bg-green-600 hover:bg-green-700 text-white"
                 onClick={() => submitPart('consult_ai', true)}

@@ -356,14 +356,14 @@ export function setupGameHandlers(
     if (engine) engine.advanceBonusPartReveal();
   });
 
-  socket.on('bonus:reveal_ai', () => {
+  socket.on('bonus:reveal_ai', (data: { initialGuess: string }) => {
     if (!roomManager.isModerator(socket.id)) return;
 
     const room = roomManager.getRoomForSocket(socket.id);
     if (!room) return;
 
     const engine = gameEngines.get(room.code);
-    if (engine) engine.revealBonusAi();
+    if (engine) engine.revealBonusAi(data?.initialGuess ?? '');
   });
 
   socket.on('bonus:part_result', (data: { decision: BonusPartDecision; correct: boolean; answer: string }) => {

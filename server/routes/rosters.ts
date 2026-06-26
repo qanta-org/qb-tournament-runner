@@ -41,6 +41,7 @@ interface HumanRosterEntry {
   type: 'human';
   description?: string;
   default_buzzer_key?: string;
+  team?: string;
 }
 
 type RosterEntry = AIRosterEntry | HumanRosterEntry;
@@ -236,6 +237,7 @@ function loadRosterFile(filename: string): RosterEntry[] {
           type: 'human' as const,
           description: record.description || '',
           default_buzzer_key: record.default_buzzer_key || '',
+          team: record.team || undefined,
         };
       }
     });

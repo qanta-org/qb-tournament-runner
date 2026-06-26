@@ -570,7 +570,13 @@ datasetsRouter.get('/asset', (req, res) => {
     return res.status(403).json({ error: 'Asset path not allowed' });
   }
 
-  return res.sendFile(normalized);
+  // Packet assets are content-addressed (hash-named) and never change, so they
+  // can be cached aggressively. This avoids re-downloading large images on
+  // replays/re-renders and keeps preloaded images warm in the browser cache.
+  return res.sendFile(normalized, {
+    maxAge: '365d',
+    immutable: true,
+  });
 });
 
 /**

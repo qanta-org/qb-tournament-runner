@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import type { AIPlayerKwargs, ModelInfo, ModelRosterEntry, Team, Player, PlayerType } from '../../../../shared/types';
-import { aiModelSummary } from '../../../../shared/modelLabels';
+import type { AIPlayerKwargs, ModelInfo, ModelRosterEntry, Team, Player } from '../../../../shared/types';
+import { aiModelSummaryLines } from '../../../../shared/modelLabels';
 import type { ApiRosterPlayer } from '../../api/rosters';
-import { fetchBonusModelRoster, fetchTossupModelRoster } from '../../api/rosters';
+import { fetchBonusModelRoster, fetchHumanRoster, fetchTossupModelRoster } from '../../api/rosters';
 
 type RosterPlayer = ApiRosterPlayer;
 
@@ -353,25 +353,22 @@ export function TeamBuilder({
   excludedPlayerIds = [],
   allUsedBuzzerKeys = new Map(),
 }: TeamBuilderProps) {
-  const [aiRoster, setAiRoster] = useState<RosterPlayer[]>([]);
   const [humanRoster, setHumanRoster] = useState<RosterPlayer[]>([]);
   const [tossupRoster, setTossupRoster] = useState<ModelRosterEntry[]>([]);
   const [bonusRoster, setBonusRoster] = useState<ModelRosterEntry[]>([]);
-  const [rosterSource, setRosterSource] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [addMode, setAddMode] = useState<'roster' | 'custom'>('roster');
-  const [playerTypeFilter, setPlayerTypeFilter] = useState<'all' | 'human' | 'ai'>('all');
+  const [addMode, setAddMode] = useState<'roster' | 'custom' | 'ai'>('roster');
 
-  // Custom player form state
+  // Custom human form state
   const [customName, setCustomName] = useState('');
-  const [customType, setCustomType] = useState<PlayerType>('human');
   const [customBuzzerKey, setCustomBuzzerKey] = useState('');
-  const [customTossupModel, setCustomTossupModel] = useState('');
-  const [customBonusModel, setCustomBonusModel] = useState('');
-  // Whether the custom AI player's tossup/bonus models are coupled (one choice
-  // drives both). Defaults to coupled when the dataset supports it.
-  const [customCoupled, setCustomCoupled] = useState(true);
+
+  // Add AI form state
+  const [aiTossupModel, setAiTossupModel] = useState('');
+  const [aiBonusModel, setAiBonusModel] = useState('');
+  const [aiDisplayName, setAiDisplayName] = useState('');
+  const [aiNameManuallyEdited, setAiNameManuallyEdited] = useState(false);
 
   // Multi-select state for roster
   const [selectedRosterPlayers, setSelectedRosterPlayers] = useState<Set<string>>(new Set());
@@ -384,33 +381,15 @@ export function TeamBuilder({
     loadRosters();
   }, [datasetId]);
 
-  // Decoupled pickers are the only option when no model key serves both phases.
-  useEffect(() => {
-    if (!canUseCoupledMode(tossupRoster, bonusRoster, coupledModelNames)) {
-      setCustomCoupled(false);
-    }
-  }, [tossupRoster, bonusRoster, coupledModelNames]);
-
   const loadRosters = async () => {
     setLoading(true);
     try {
-      const queryParam = datasetId ? `?dataset=${encodeURIComponent(datasetId)}` : '';
-      const [aiRes, humanRes, tossupData, bonusData] = await Promise.all([
-        fetch(`/api/rosters/ai${queryParam}`),
-        fetch(`/api/rosters/human${queryParam}`),
+      const [humanData, tossupData, bonusData] = await Promise.all([
+        fetchHumanRoster(datasetId),
         fetchTossupModelRoster(datasetId),
         fetchBonusModelRoster(datasetId),
       ]);
-
-      if (aiRes.ok) {
-        const data = await aiRes.json();
-        setAiRoster(data.players || []);
-        setRosterSource(data.source || 'global');
-      }
-      if (humanRes.ok) {
-        const data = await humanRes.json();
-        setHumanRoster(data.players || []);
-      }
+      setHumanRoster(humanData.players || []);
       setTossupRoster(tossupData.entries || []);
       setBonusRoster(bonusData.entries || []);
     } catch (err) {
@@ -421,32 +400,21 @@ export function TeamBuilder({
   };
 
   const getFilteredRoster = (): RosterPlayer[] => {
-    const combined = [...humanRoster, ...aiRoster];
-    // Exclude players already on this team
     const existingIds = new Set(team.players.map(p => p.player_id));
-    // Exclude players on the other team
     const excludedIds = new Set(excludedPlayerIds);
-    
-    const filtered = combined.filter(p => 
+    return humanRoster.filter(p =>
       !existingIds.has(p.player_id) && !excludedIds.has(p.player_id)
     );
-
-    if (playerTypeFilter === 'all') return filtered;
-    return filtered.filter(p => p.type === playerTypeFilter);
   };
 
   const addPlayerFromRoster = (rosterPlayer: RosterPlayer) => {
     const nextKey = getNextBuzzerKey();
-    
     const newPlayer: Player = {
       player_id: rosterPlayer.player_id,
       name: rosterPlayer.name,
-      type: rosterPlayer.type,
-      extra_kwargs: rosterPlayer.type === 'human'
-        ? { buzzer_key: rosterPlayer.default_buzzer_key || nextKey }
-        : buildAiKwargsFromRoster(rosterPlayer, tossupRoster, bonusRoster),
+      type: 'human',
+      extra_kwargs: { buzzer_key: rosterPlayer.default_buzzer_key || nextKey },
     };
-
     onChange({
       ...team,
       players: [...team.players, newPlayer],
@@ -466,22 +434,19 @@ export function TeamBuilder({
   };
 
   const addSelectedPlayers = () => {
-    const roster = [...humanRoster, ...aiRoster];
     const playersToAdd: Player[] = [];
     let keyCounter = 0;
 
     for (const playerId of selectedRosterPlayers) {
-      const rosterPlayer = roster.find(p => p.player_id === playerId);
+      const rosterPlayer = humanRoster.find(p => p.player_id === playerId);
       if (!rosterPlayer) continue;
 
-      // Get next available key for human players
       const getKey = () => {
         const usedKeys = new Set([
           ...team.players
             .filter(p => p.type === 'human')
             .map(p => (p.extra_kwargs as { buzzer_key?: string })?.buzzer_key),
           ...playersToAdd
-            .filter(p => p.type === 'human')
             .map(p => (p.extra_kwargs as { buzzer_key?: string })?.buzzer_key),
         ]);
         for (let i = 1; i <= 9; i++) {
@@ -494,10 +459,8 @@ export function TeamBuilder({
       playersToAdd.push({
         player_id: rosterPlayer.player_id,
         name: rosterPlayer.name,
-        type: rosterPlayer.type,
-        extra_kwargs: rosterPlayer.type === 'human'
-          ? { buzzer_key: rosterPlayer.default_buzzer_key || getKey() }
-          : buildAiKwargsFromRoster(rosterPlayer, tossupRoster, bonusRoster),
+        type: 'human',
+        extra_kwargs: { buzzer_key: rosterPlayer.default_buzzer_key || getKey() },
       });
     }
 
@@ -523,50 +486,41 @@ export function TeamBuilder({
 
   const addCustomPlayer = () => {
     if (!customName.trim()) return;
-
-    const playerId = `custom_${Date.now()}`;
-    const tossupEntry = tossupRoster.find((e) => e.model === customTossupModel);
-    const bonusModelKey = customCoupled ? customTossupModel : customBonusModel;
-    const bonusEntry = bonusRoster.find((e) => e.model === bonusModelKey);
-
     const newPlayer: Player = {
-      player_id: playerId,
+      player_id: `custom_${Date.now()}`,
       name: customName.trim(),
-      type: customType,
-      extra_kwargs: customType === 'human'
-        ? { buzzer_key: customBuzzerKey || getNextBuzzerKey() }
-        : customCoupled
-        ? {
-            tossup_model: customTossupModel,
-            bonus_model: customTossupModel,
-            tossup_model_name: tossupEntry?.name,
-            bonus_model_name: bonusEntry?.name ?? tossupEntry?.name,
-            coupled: true,
-            tossup_weight_class: tossupEntry?.weight_class,
-            bonus_weight_class: bonusEntry?.weight_class ?? tossupEntry?.weight_class,
-          }
-        : {
-            tossup_model: customTossupModel,
-            bonus_model: customBonusModel,
-            tossup_model_name: tossupEntry?.name,
-            bonus_model_name: bonusEntry?.name,
-            coupled: false,
-            tossup_weight_class: tossupEntry?.weight_class,
-            bonus_weight_class: bonusEntry?.weight_class,
-          },
+      type: 'human',
+      extra_kwargs: { buzzer_key: customBuzzerKey || getNextBuzzerKey() },
     };
-
-    onChange({
-      ...team,
-      players: [...team.players, newPlayer],
-    });
-
-    // Reset form
+    onChange({ ...team, players: [...team.players, newPlayer] });
     setCustomName('');
     setCustomBuzzerKey('');
-    setCustomTossupModel('');
-    setCustomBonusModel('');
-    setCustomCoupled(true);
+    setShowAddDialog(false);
+  };
+
+  const addAIPlayer = () => {
+    const tossupEntry = tossupRoster.find((e) => e.model === aiTossupModel);
+    const bonusEntry = bonusRoster.find((e) => e.model === aiBonusModel);
+    const name = aiDisplayName.trim() || tossupEntry?.name || bonusEntry?.name || 'AI';
+    const newPlayer: Player = {
+      player_id: `custom_ai_${Date.now()}`,
+      name,
+      type: 'ai',
+      extra_kwargs: {
+        tossup_model: aiTossupModel,
+        bonus_model: aiBonusModel,
+        tossup_model_name: tossupEntry?.name,
+        bonus_model_name: bonusEntry?.name,
+        tossup_weight_class: tossupEntry?.weight_class,
+        bonus_weight_class: bonusEntry?.weight_class,
+        coupled: false,
+      } as AIPlayerKwargs,
+    };
+    onChange({ ...team, players: [...team.players, newPlayer] });
+    setAiTossupModel('');
+    setAiBonusModel('');
+    setAiDisplayName('');
+    setAiNameManuallyEdited(false);
     setShowAddDialog(false);
   };
 
@@ -659,11 +613,19 @@ export function TeamBuilder({
               </span>
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-sm truncate">{player.name}</div>
-                {player.type === 'ai' && (
-                  <div className="text-[11px] text-gray-400 truncate">
-                    {aiModelSummary(player.extra_kwargs as AIPlayerKwargs)}
-                  </div>
-                )}
+                {player.type === 'ai' && (() => {
+                  const { tossup, bonus } = aiModelSummaryLines(player.extra_kwargs as AIPlayerKwargs);
+                  return (
+                    <div className="text-[11px] space-y-0.5">
+                      <div className={tossup ? 'text-gray-400' : 'text-gray-300 italic'}>
+                        T: {tossup ?? '[None]'}
+                      </div>
+                      <div className={bonus ? 'text-gray-400' : 'text-gray-300 italic'}>
+                        B: {bonus ?? '[None]'}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {player.type === 'human' ? (
                   (() => {
                     const currentKey = (player.extra_kwargs as { buzzer_key?: string })?.buzzer_key || '';
@@ -749,6 +711,16 @@ export function TeamBuilder({
                 📋 From Roster
               </button>
               <button
+                onClick={() => setAddMode('ai')}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${
+                  addMode === 'ai'
+                    ? 'border-b-2 border-blue-600 text-blue-600'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                🤖 Add AI
+              </button>
+              <button
                 onClick={() => setAddMode('custom')}
                 className={`flex-1 py-3 text-sm font-medium transition-colors ${
                   addMode === 'custom'
@@ -756,7 +728,7 @@ export function TeamBuilder({
                     : 'text-gray-500 hover:text-gray-700'
                 }`}
               >
-                ✏️ Custom Player
+                ✏️ Custom Human
               </button>
             </div>
 
@@ -764,50 +736,17 @@ export function TeamBuilder({
             <div className="p-4 overflow-y-auto max-h-[50vh]">
               {addMode === 'roster' ? (
                 <div>
-                  {/* Filter + Add button row */}
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setPlayerTypeFilter('all')}
-                        className={`px-3 py-1 rounded-full text-sm ${
-                          playerTypeFilter === 'all'
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-100 text-gray-600'
-                        }`}
-                      >
-                        All
-                      </button>
-                      <button
-                        onClick={() => setPlayerTypeFilter('human')}
-                        className={`px-3 py-1 rounded-full text-sm ${
-                          playerTypeFilter === 'human'
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-100 text-gray-600'
-                        }`}
-                      >
-                        👤 Humans
-                      </button>
-                      <button
-                        onClick={() => setPlayerTypeFilter('ai')}
-                        className={`px-3 py-1 rounded-full text-sm ${
-                          playerTypeFilter === 'ai'
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-100 text-gray-600'
-                        }`}
-                      >
-                        🤖 AI
-                      </button>
-                    </div>
-                    {/* Add selected button (top) */}
-                    {selectedRosterPlayers.size > 0 && (
+                  {/* Add selected button (top) */}
+                  {selectedRosterPlayers.size > 0 && (
+                    <div className="flex justify-end mb-3">
                       <button
                         onClick={addSelectedPlayers}
                         className="btn btn-primary text-sm py-1 px-3"
                       >
                         + Add {selectedRosterPlayers.size}
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
                   {loading ? (
                     <div className="text-center py-8 text-gray-500">
@@ -815,7 +754,7 @@ export function TeamBuilder({
                     </div>
                   ) : filteredRoster.length === 0 ? (
                     <div className="text-center py-8 text-gray-500">
-                      No available players in roster.
+                      No human players available in roster.
                       <button
                         onClick={() => setAddMode('custom')}
                         className="block mx-auto mt-2 text-blue-600 hover:text-blue-800"
@@ -825,7 +764,7 @@ export function TeamBuilder({
                     </div>
                   ) : (
                     <>
-                      {/* Select all / clear buttons */}
+                      {/* Select all / clear */}
                       <div className="flex justify-between items-center mb-2 text-xs">
                         <span className="text-gray-500">
                           {selectedRosterPlayers.size} selected
@@ -854,8 +793,8 @@ export function TeamBuilder({
                               key={player.player_id}
                               onClick={() => toggleRosterSelection(player.player_id)}
                               className={`w-full flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                                isSelected 
-                                  ? 'bg-blue-50 border-blue-300' 
+                                isSelected
+                                  ? 'bg-blue-50 border-blue-300'
                                   : 'hover:bg-gray-50'
                               }`}
                             >
@@ -865,30 +804,19 @@ export function TeamBuilder({
                                 onChange={() => {}}
                                 className="w-4 h-4 text-blue-600"
                               />
-                              <span className="text-xl">
-                                {player.type === 'human' ? '👤' : '🤖'}
-                              </span>
+                              <span className="text-xl">👤</span>
                               <div className="flex-1 min-w-0">
                                 <div className="font-medium text-sm">{player.name}</div>
-                                {player.type === 'ai' ? (
-                                  <div className="text-xs text-gray-500 truncate">
-                                    {aiModelSummary(
-                                      buildAiKwargsFromRoster(player, tossupRoster, bonusRoster)
-                                    )}
-                                  </div>
-                                ) : (
-                                  <div className="text-xs text-gray-500">
-                                    {player.default_buzzer_key && `Key: ${player.default_buzzer_key}`}
-                                    {player.description && ` • ${player.description}`}
-                                  </div>
-                                )}
+                                <div className="text-xs text-gray-500">
+                                  {player.default_buzzer_key && `Key: ${player.default_buzzer_key}`}
+                                  {player.description && ` • ${player.description}`}
+                                </div>
                               </div>
                             </div>
                           );
                         })}
                       </div>
 
-                      {/* Add Selected button */}
                       {selectedRosterPlayers.size > 0 && (
                         <div className="mt-4 pt-4 border-t">
                           <button
@@ -902,38 +830,82 @@ export function TeamBuilder({
                     </>
                   )}
                 </div>
-              ) : (
+              ) : addMode === 'ai' ? (
                 <div className="space-y-4">
-                  {/* Player type */}
+                  <p className="text-sm text-gray-500">
+                    Select a tossup model, bonus model, or both. Leave either blank to skip that phase.
+                  </p>
+
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Player Type
+                      Tossup Model
                     </label>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setCustomType('human')}
-                        className={`flex-1 py-2 rounded-lg border-2 transition-colors ${
-                          customType === 'human'
-                            ? 'border-blue-500 bg-blue-50'
-                            : 'border-gray-200'
-                        }`}
-                      >
-                        👤 Human
-                      </button>
-                      <button
-                        onClick={() => setCustomType('ai')}
-                        className={`flex-1 py-2 rounded-lg border-2 transition-colors ${
-                          customType === 'ai'
-                            ? 'border-blue-500 bg-blue-50'
-                            : 'border-gray-200'
-                        }`}
-                      >
-                        🤖 AI
-                      </button>
-                    </div>
+                    <RosterModelSelect
+                      value={aiTossupModel}
+                      onChange={(modelKey, entry) => {
+                        setAiTossupModel(modelKey);
+                        if (!aiNameManuallyEdited) {
+                          setAiDisplayName(entry?.name ?? '');
+                        }
+                      }}
+                      entries={tossupRoster}
+                      fallbackOptions={tossupModelNames}
+                      allModelNames={allModelNames}
+                      hasModelInfo={hasModelInfo}
+                      emptyLabel="None (skip tossups)"
+                      placeholder="Tossup model key"
+                    />
                   </div>
 
-                  {/* Name */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Bonus Model
+                    </label>
+                    <RosterModelSelect
+                      value={aiBonusModel}
+                      onChange={(modelKey) => setAiBonusModel(modelKey)}
+                      entries={bonusRoster}
+                      fallbackOptions={bonusModelNames}
+                      allModelNames={allModelNames}
+                      hasModelInfo={hasModelInfo}
+                      emptyLabel="None (skip bonuses)"
+                      placeholder="Bonus model key"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Display Name
+                    </label>
+                    <input
+                      type="text"
+                      value={aiDisplayName}
+                      onChange={(e) => {
+                        setAiDisplayName(e.target.value);
+                        setAiNameManuallyEdited(true);
+                      }}
+                      placeholder={
+                        tossupRoster.find(e => e.model === aiTossupModel)?.name ||
+                        bonusRoster.find(e => e.model === aiBonusModel)?.name ||
+                        'AI'
+                      }
+                      className="input"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Leave blank to use the tossup model name.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={addAIPlayer}
+                    disabled={!aiTossupModel && !aiBonusModel}
+                    className="btn btn-primary w-full"
+                  >
+                    Add AI Player
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Name *
@@ -947,109 +919,26 @@ export function TeamBuilder({
                     />
                   </div>
 
-                  {customType === 'human' ? (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Buzzer Key
-                      </label>
-                      <input
-                        type="text"
-                        value={customBuzzerKey}
-                        onChange={(e) => setCustomBuzzerKey(e.target.value.slice(-1))}
-                        placeholder={`Default: ${getNextBuzzerKey()}`}
-                        className="input w-24"
-                        maxLength={1}
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        Press this key to buzz (1-9 recommended)
-                      </p>
-                    </div>
-                  ) : (
-                    <>
-                      {canCoupleModels && (
-                        <label className="flex items-center gap-2 text-sm text-gray-700">
-                          <input
-                            type="checkbox"
-                            checked={customCoupled}
-                            onChange={(e) => {
-                              const coupled = e.target.checked;
-                              setCustomCoupled(coupled);
-                              if (coupled) setCustomBonusModel(customTossupModel);
-                            }}
-                            className="w-4 h-4 text-blue-600"
-                          />
-                          Use the same model for tossups and bonuses
-                        </label>
-                      )}
-
-                      {customCoupled && canCoupleModels ? (
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Model *
-                          </label>
-                          <RosterModelSelect
-                            value={customTossupModel}
-                            onChange={(modelKey) => {
-                              setCustomTossupModel(modelKey);
-                              setCustomBonusModel(modelKey);
-                            }}
-                            entries={coupledEntries.length > 0 ? coupledEntries : []}
-                            fallbackOptions={coupledModelNames}
-                            allModelNames={allModelNames}
-                            hasModelInfo={hasModelInfo}
-                            emptyLabel="Select model..."
-                            placeholder="Model name (e.g., gpt-4o)"
-                          />
-                          <p className="text-xs text-gray-500 mt-1">
-                            Used for both tossups and bonuses.
-                          </p>
-                        </div>
-                      ) : (
-                        <>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Tossup Model *
-                            </label>
-                            <RosterModelSelect
-                              value={customTossupModel}
-                              onChange={(modelKey) => setCustomTossupModel(modelKey)}
-                              entries={tossupRoster}
-                              fallbackOptions={tossupModelNames}
-                              allModelNames={allModelNames}
-                              hasModelInfo={hasModelInfo}
-                              emptyLabel="Select tossup model..."
-                              placeholder="Tossup model name"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Bonus Model *
-                            </label>
-                            <RosterModelSelect
-                              value={customBonusModel}
-                              onChange={(modelKey) => setCustomBonusModel(modelKey)}
-                              entries={bonusRoster}
-                              fallbackOptions={bonusModelNames}
-                              allModelNames={allModelNames}
-                              hasModelInfo={hasModelInfo}
-                              emptyLabel="Select bonus model..."
-                              placeholder="Bonus model name"
-                            />
-                          </div>
-                        </>
-                      )}
-                    </>
-                  )}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Buzzer Key
+                    </label>
+                    <input
+                      type="text"
+                      value={customBuzzerKey}
+                      onChange={(e) => setCustomBuzzerKey(e.target.value.slice(-1))}
+                      placeholder={`Default: ${getNextBuzzerKey()}`}
+                      className="input w-24"
+                      maxLength={1}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Press this key to buzz (1-9 recommended)
+                    </p>
+                  </div>
 
                   <button
                     onClick={addCustomPlayer}
-                    disabled={
-                      !customName.trim() ||
-                      (customType === 'ai' &&
-                        (customCoupled
-                          ? !customTossupModel
-                          : !customTossupModel || !customBonusModel))
-                    }
+                    disabled={!customName.trim()}
                     className="btn btn-primary w-full"
                   >
                     Add Player

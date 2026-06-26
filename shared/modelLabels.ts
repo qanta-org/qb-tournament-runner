@@ -18,6 +18,19 @@ export function aiModelSummary(kwargs: Partial<AIPlayerKwargs>): string {
   return tossup;
 }
 
+/**
+ * Structured two-line summary for AI model display.
+ * Returns null for a phase when no model is configured (player skips that phase).
+ */
+export function aiModelSummaryLines(
+  kwargs: Partial<AIPlayerKwargs>
+): { tossup: string | null; bonus: string | null } {
+  return {
+    tossup: tossupModelLabel(kwargs) || null,
+    bonus: bonusModelLabel(kwargs) || null,
+  };
+}
+
 /** Look up a roster entry's display name for a response-file key. */
 export function rosterLabelForModel(
   modelKey: string,

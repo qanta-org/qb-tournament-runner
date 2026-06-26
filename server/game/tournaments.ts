@@ -559,7 +559,7 @@ class TournamentManagerClass {
       tossup_penalty_value: t.gameSettings.tossup_penalty_value ?? 5,
       tossup_penalty_value_second_team: t.gameSettings.tossup_penalty_value_second_team ?? 0,
       bonus_part_points: t.gameSettings.bonus_part_points ?? 10,
-      multimodal_reveal_lockout_seconds: t.gameSettings.multimodal_reveal_lockout_seconds ?? 5,
+      multimodal_reveal_lockout_seconds: t.gameSettings.multimodal_reveal_lockout_seconds ?? 1,
       ai_tossup_score_factors:
         t.gameSettings.ai_tossup_score_factors ?? {
           lightweight: 1.0,

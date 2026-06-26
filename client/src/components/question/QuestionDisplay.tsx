@@ -25,6 +25,17 @@ export function QuestionDisplay() {
     return () => window.clearInterval(interval);
   }, [gameState.revealLockoutUntilMs]);
 
+  // Warm the browser cache with every image in the current tossup so each one
+  // paints the instant its token is revealed instead of downloading on reveal.
+  const tossupImageKey = gameState.tossupImageUrls.join('|');
+  useEffect(() => {
+    if (!tossupImageKey) return;
+    for (const url of tossupImageKey.split('|')) {
+      const img = new Image();
+      img.src = url;
+    }
+  }, [tossupImageKey]);
+
   // Progress percentage
   const progress =
     gameState.totalTokens > 0
@@ -202,6 +213,7 @@ export function QuestionDisplay() {
           {lastRevealedImageToken ? (
             <div className="flex-1 min-h-[260px] max-h-[320px] border border-slate-200 rounded bg-white flex items-center justify-center overflow-hidden">
               <img
+                key={lastRevealedImageToken.assetUrl}
                 src={lastRevealedImageToken.assetUrl}
                 alt={lastRevealedImageToken.hash || 'multimodal image'}
                 className="w-full h-full object-contain"

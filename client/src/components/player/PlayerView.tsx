@@ -91,6 +91,19 @@ export function PlayerView() {
     return () => window.clearInterval(interval);
   }, [gameState.revealLockoutUntilMs]);
 
+  // Warm the browser cache with every image in the current tossup so each one
+  // paints the instant its token is revealed (large packet images otherwise pop
+  // in a token late on remote displays). Preloading only fetches into cache; the
+  // images are still displayed solely when their token is revealed.
+  const tossupImageKey = gameState.tossupImageUrls.join('|');
+  useEffect(() => {
+    if (!tossupImageKey) return;
+    for (const url of tossupImageKey.split('|')) {
+      const img = new Image();
+      img.src = url;
+    }
+  }, [tossupImageKey]);
+
   const showBonusResponsesForTeam = (teamId: TeamId) =>
     isBonusPhase &&
     bonusOwner === teamId &&
@@ -242,6 +255,7 @@ export function PlayerView() {
                   </div>
                   <div className="pv-image-frame">
                     <img
+                      key={lastRevealedImageToken.assetUrl}
                       src={lastRevealedImageToken.assetUrl}
                       alt={lastRevealedImageToken.hash || 'multimodal image'}
                       className="max-w-full max-h-full object-contain"

@@ -387,6 +387,17 @@ export class GameEngine {
     this.state.activeMultimodalToken = null;
     this.state.revealLockoutUntilMs = null;
     this.state.revealedTossupTokens = [];
+    // Expose every image asset URL in this tossup so clients can warm their
+    // browser cache before each image token is revealed. Large packet images
+    // otherwise pop in a token late on remote player displays. Only opaque
+    // asset URLs are exposed here — the images are still displayed solely when
+    // their token is revealed.
+    this.state.tossupImageUrls = this.currentTossupTokens
+      .filter(
+        (token): token is Extract<TossupToken, { kind: 'multimodal' }> =>
+          token.kind === 'multimodal' && token.tokenType === 'img' && !!token.assetUrl
+      )
+      .map((token) => token.assetUrl as string);
     this.state.teamBuzzed = { team_a: false, team_b: false };
     this.state.buzzingPlayer = null;
     this.state.buzzingPlayerGuess = null;
@@ -511,6 +522,7 @@ export class GameEngine {
     for (const player of this.getAIPlayers()) {
       const playerId = player.player_id;
       const kwargs = player.extra_kwargs as { tossup_model: string };
+      if (!kwargs.tossup_model) continue;
       const guess = guesses.get(kwargs.tossup_model);
       if (!guess) continue;
 
@@ -722,6 +734,10 @@ export class GameEngine {
           },
           tossupModelName:
             player.type === 'ai' ? tossupModelLabel(player.extra_kwargs as AIPlayerKwargs) : undefined,
+          tossupModelId:
+            player.type === 'ai'
+              ? (player.extra_kwargs as AIPlayerKwargs).tossup_model || undefined
+              : undefined,
           position: this.state.wordIndex,
           guess: answer,
           points,
@@ -846,6 +862,7 @@ export class GameEngine {
     this.state.bonusResponses = [];
     this.state.bonusPartDecision = 'pending';
     this.state.bonusAiRevealed = false;
+    this.state.bonusInitialGuess = null;
 
     // Clear tossup-related state when starting a bonus
     this.state.buzzingPlayer = null;
@@ -891,6 +908,7 @@ export class GameEngine {
     this.state.phase = 'bonus_part';
     this.state.bonusPartDecision = 'pending';
     this.state.bonusAiRevealed = false;
+    this.state.bonusInitialGuess = null;
     this.emitState();
   }
 
@@ -919,9 +937,12 @@ export class GameEngine {
    * QANTA 2026: reveal the owning team's AI responses for the current bonus part.
    * The team consults the AI before submitting (consult path -> reduced credit).
    */
-  revealBonusAi(): void {
+  revealBonusAi(initialGuess: string): void {
     if (this.state.phase !== 'bonus_part') return;
     this.state.bonusAiRevealed = true;
+    // Register the team's guess at the moment they choose to consult the AI.
+    // The final answer submitted afterwards (edited or not) is the one that counts.
+    this.state.bonusInitialGuess = initialGuess;
     this.state.bonusResponses = this.loadOwningTeamBonusResponses();
     this.emitState();
   }
@@ -956,13 +977,16 @@ export class GameEngine {
     // Record the part
     if (this.currentRecord?.bonusResponses) {
       const bonusResponsesLog: Record<string, string> = {};
+      const bonusResponseIdsLog: Record<string, string> = {};
       const shouldLogBonusAi = decision === 'consult_ai' || this.state.bonusAiRevealed;
       if (shouldLogBonusAi) {
         const responses = this.state.bonusAiRevealed
           ? this.state.bonusResponses
           : this.loadOwningTeamBonusResponses();
         for (const response of responses) {
-          bonusResponsesLog[this.bonusModelLabelForSystem(response.system)] = response.guess;
+          const label = this.bonusModelLabelForSystem(response.system);
+          bonusResponsesLog[label] = response.guess;
+          bonusResponseIdsLog[label] = response.system;
         }
       }
 
@@ -973,6 +997,11 @@ export class GameEngine {
             : this.config.team_b.name,
         points,
         responses: bonusResponsesLog,
+        responseIds: shouldLogBonusAi ? bonusResponseIdsLog : undefined,
+        initialGuess:
+          this.state.bonusInitialGuess !== null
+            ? this.state.bonusInitialGuess
+            : undefined,
         finalGuess: answer,
         decision,
         aiRevealed: this.state.bonusAiRevealed,
@@ -1015,6 +1044,7 @@ export class GameEngine {
       this.state.bonusResponses = [];
       this.state.bonusPartDecision = 'pending';
       this.state.bonusAiRevealed = false;
+      this.state.bonusInitialGuess = null;
       this.state.currentBonusPartAnswer = this.state.bonusQuestion.parts[this.state.currentBonusPart].answer;
     } else {
       // End bonus, go to next tossup
@@ -1034,6 +1064,7 @@ export class GameEngine {
       this.state.currentBonusPartAnswer = null;
       this.state.bonusPartDecision = 'pending';
       this.state.bonusAiRevealed = false;
+      this.state.bonusInitialGuess = null;
       this.nextQuestion();
     }
 

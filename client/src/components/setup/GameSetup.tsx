@@ -3,8 +3,9 @@ import { useGame } from '../../context/GameContext';
 import { TeamBuilder } from './TeamBuilder';
 import { FileUploader } from './FileUploader';
 import { fetchRulePresets, fetchRulePreset, type RulePresetSummary } from '../../api/config';
-import type { AIPlayerKwargs, DeflationMode, GameConfig, ModelInfo, Team } from '../../../../shared/types';
-import { aiModelSummary } from '../../../../shared/modelLabels';
+import { fetchHumanRoster } from '../../api/rosters';
+import type { AIPlayerKwargs, DeflationMode, GameConfig, ModelInfo, Player, Team } from '../../../../shared/types';
+import { aiModelSummaryLines } from '../../../../shared/modelLabels';
 import {
   DEFAULT_AI_TOSSUP_SCORE_FACTORS,
   DEFAULT_AUTONOMOUS_K,
@@ -39,6 +40,73 @@ const DEFAULT_TEAM_B: Team = {
   name: 'Team 2',
   players: [],
 };
+
+interface PresetTeamPickerProps {
+  datasetId: string;
+  teamColor: string;
+  currentTeam: Team;
+  onChange: (team: Team) => void;
+}
+
+function PresetTeamPicker({ datasetId, teamColor, currentTeam, onChange }: PresetTeamPickerProps) {
+  const [presets, setPresets] = useState<Map<string, Player[]>>(new Map());
+
+  useEffect(() => {
+    if (!datasetId) { setPresets(new Map()); return; }
+    fetchHumanRoster(datasetId).then((data) => {
+      const byTeam = new Map<string, Player[]>();
+      for (const p of data.players) {
+        const groupName = p.team;
+        if (!groupName) continue;
+        if (!byTeam.has(groupName)) byTeam.set(groupName, []);
+        byTeam.get(groupName)!.push({
+          player_id: p.player_id,
+          name: p.name,
+          type: 'human',
+          extra_kwargs: { buzzer_key: p.default_buzzer_key || '' },
+        });
+      }
+      // Assign sequential buzzer keys where missing
+      for (const players of byTeam.values()) {
+        let keyIdx = 1;
+        for (const p of players) {
+          const bk = (p.extra_kwargs as { buzzer_key: string }).buzzer_key;
+          if (!bk) {
+            (p.extra_kwargs as { buzzer_key: string }).buzzer_key = String(keyIdx);
+          }
+          keyIdx++;
+        }
+      }
+      setPresets(byTeam.size >= 2 ? byTeam : new Map());
+    }).catch(() => setPresets(new Map()));
+  }, [datasetId]);
+
+  if (presets.size < 2) return null;
+
+  const loadPreset = (groupName: string) => {
+    const humanPlayers = presets.get(groupName) ?? [];
+    const existingAI = currentTeam.players.filter(p => p.type === 'ai');
+    onChange({ name: groupName, players: [...existingAI, ...humanPlayers] });
+  };
+
+  return (
+    <div className="mb-3">
+      <p className="text-xs text-gray-500 mb-1">Load preset team:</p>
+      <div className="flex flex-wrap gap-2">
+        {Array.from(presets.entries()).map(([name, players]) => (
+          <button
+            key={name}
+            onClick={() => loadPreset(name)}
+            className="px-3 py-1 text-xs rounded-full border transition-colors hover:opacity-90"
+            style={{ borderColor: teamColor, color: teamColor }}
+          >
+            {name} ({players.length})
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function GameSetup() {
   const { startGame, isConnected } = useGame();
@@ -87,8 +155,14 @@ export function GameSetup() {
 
   useEffect(() => {
     fetchRulePresets()
-      .then(setRulePresets)
+      .then((presets) => {
+        setRulePresets(presets);
+        if (presets.some((p) => p.id === 'qanta26')) {
+          void applyPreset('qanta26');
+        }
+      })
       .catch((err) => console.error('Failed to load rule presets:', err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const applyPreset = async (id: string) => {
@@ -308,26 +382,42 @@ export function GameSetup() {
                 </p>
               )}
               <div className="grid grid-cols-2 gap-6">
-                <TeamBuilder
-                  team={teamA}
-                  onChange={setTeamA}
-                  teamLabel="Team A"
-                  teamColor="#d64960"
-                  availableModels={availableModels}
-                  datasetId={selectedDatasetId}
-                  excludedPlayerIds={teamB.players.map(p => p.player_id)}
-                  allUsedBuzzerKeys={getAllUsedBuzzerKeys()}
-                />
-                <TeamBuilder
-                  team={teamB}
-                  onChange={setTeamB}
-                  teamLabel="Team B"
-                  teamColor="#2a9cad"
-                  availableModels={availableModels}
-                  datasetId={selectedDatasetId}
-                  excludedPlayerIds={teamA.players.map(p => p.player_id)}
-                  allUsedBuzzerKeys={getAllUsedBuzzerKeys()}
-                />
+                <div>
+                  <PresetTeamPicker
+                    datasetId={selectedDatasetId}
+                    teamColor="#d64960"
+                    currentTeam={teamA}
+                    onChange={setTeamA}
+                  />
+                  <TeamBuilder
+                    team={teamA}
+                    onChange={setTeamA}
+                    teamLabel="Team A"
+                    teamColor="#d64960"
+                    availableModels={availableModels}
+                    datasetId={selectedDatasetId}
+                    excludedPlayerIds={teamB.players.map(p => p.player_id)}
+                    allUsedBuzzerKeys={getAllUsedBuzzerKeys()}
+                  />
+                </div>
+                <div>
+                  <PresetTeamPicker
+                    datasetId={selectedDatasetId}
+                    teamColor="#2a9cad"
+                    currentTeam={teamB}
+                    onChange={setTeamB}
+                  />
+                  <TeamBuilder
+                    team={teamB}
+                    onChange={setTeamB}
+                    teamLabel="Team B"
+                    teamColor="#2a9cad"
+                    availableModels={availableModels}
+                    datasetId={selectedDatasetId}
+                    excludedPlayerIds={teamA.players.map(p => p.player_id)}
+                    allUsedBuzzerKeys={getAllUsedBuzzerKeys()}
+                  />
+                </div>
               </div>
               <div className="mt-6 flex justify-between">
                 <button onClick={() => setStep('files')} className="btn btn-secondary">
@@ -669,36 +759,34 @@ export function GameSetup() {
                 <div className="bg-gray-50 p-4 rounded-lg">
                   <h3 className="font-semibold text-gray-700 mb-2">Teams</h3>
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="font-medium text-team-a">{teamA.name}</p>
-                      <ul className="text-sm text-gray-600">
-                        {teamA.players.map((p) => (
-                          <li key={p.player_id}>
-                            {p.type === 'human' ? '👤' : '🤖'} {p.name}
-                            {p.type === 'ai' && (
-                              <span className="text-xs text-gray-400 ml-1">
-                                ({aiModelSummary(p.extra_kwargs as AIPlayerKwargs)})
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                    <div>
-                      <p className="font-medium text-team-b">{teamB.name}</p>
-                      <ul className="text-sm text-gray-600">
-                        {teamB.players.map((p) => (
-                          <li key={p.player_id}>
-                            {p.type === 'human' ? '👤' : '🤖'} {p.name}
-                            {p.type === 'ai' && (
-                              <span className="text-xs text-gray-400 ml-1">
-                                ({aiModelSummary(p.extra_kwargs as AIPlayerKwargs)})
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                    {([
+                      { team: teamA, colorClass: 'text-team-a' },
+                      { team: teamB, colorClass: 'text-team-b' },
+                    ] as { team: Team; colorClass: string }[]).map(({ team, colorClass }) => (
+                      <div key={team.name}>
+                        <p className={`font-medium ${colorClass}`}>{team.name}</p>
+                        <ul className="text-sm text-gray-600 space-y-1">
+                          {team.players.map((p) => (
+                            <li key={p.player_id}>
+                              <span>{p.type === 'human' ? '👤' : '🤖'} {p.name}</span>
+                              {p.type === 'ai' && (() => {
+                                const { tossup, bonus } = aiModelSummaryLines(p.extra_kwargs as AIPlayerKwargs);
+                                return (
+                                  <div className="ml-5 text-xs space-y-0.5">
+                                    <div className={tossup ? 'text-gray-400' : 'text-gray-300 italic'}>
+                                      T: {tossup ?? '[None]'}
+                                    </div>
+                                    <div className={bonus ? 'text-gray-400' : 'text-gray-300 italic'}>
+                                      B: {bonus ?? '[None]'}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
                   </div>
                 </div>
 

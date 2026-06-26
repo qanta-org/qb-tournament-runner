@@ -319,8 +319,14 @@ export function TournamentWizard() {
 
   useEffect(() => {
     fetchRulePresets()
-      .then(setRulePresets)
+      .then((presets) => {
+        setRulePresets(presets);
+        if (presets.some((p) => p.id === 'qanta26')) {
+          void applyRulePreset('qanta26');
+        }
+      })
       .catch((err) => console.error('Failed to load rule presets:', err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const applyRulePreset = async (id: string) => {
