@@ -122,7 +122,7 @@ export function RoleSelection() {
               <button
                 onClick={() => setMode('join_tournament')}
                 disabled={!isConnected}
-                className="w-full p-4 rounded-xl border-2 border-purple-500 bg-purple-50 hover:bg-purple-100 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full mb-4 p-4 rounded-xl border-2 border-purple-500 bg-purple-50 hover:bg-purple-100 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <div className="flex items-center gap-4">
                   <div className="text-4xl">🎯</div>
@@ -130,6 +130,21 @@ export function RoleSelection() {
                     <h3 className="text-lg font-semibold text-purple-800">Manage a Tournament</h3>
                     <p className="text-sm text-purple-600">
                       Enter a tournament code to manage games in a tournament
+                    </p>
+                  </div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => navigate('/tools/model-deflation')}
+                className="w-full p-4 rounded-xl border-2 border-indigo-500 bg-indigo-50 hover:bg-indigo-100 transition-colors text-left"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="text-4xl">📊</div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-indigo-800">Model Deflation Calculator</h3>
+                    <p className="text-sm text-indigo-600">
+                      Compare tossup and bonus points by model weight class
                     </p>
                   </div>
                 </div>

@@ -211,11 +211,11 @@ export function AnswerReviewDialog() {
           </div>
         )}
 
-        {/* Correct answer display (for AI buzzes) */}
-        {!isHuman && gameState.currentTossupAnswer && (
+        {/* Correct answer reference for the moderator */}
+        {gameState.currentTossupAnswer && (
           <div className="mb-4 flex items-center justify-center gap-2 bg-green-100 px-3 py-2 rounded-lg">
             <span className="text-xs text-green-600 font-medium">Correct Answer:</span>
-            <span 
+            <span
               className="text-sm text-green-800 font-semibold"
               dangerouslySetInnerHTML={{ __html: gameState.currentTossupAnswer }}
             />

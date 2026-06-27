@@ -485,6 +485,22 @@ export interface CreateTournamentParams {
 
 export type AnswerRuling = 'accept' | 'reject' | 'reject_no_penalty';
 
+export interface TossupModelStateRecord {
+  playerId: string;
+  playerName: string;
+  team: string;
+  tossupModelId: string;
+  tossupModelName: string;
+  buzzMode: AIBuzzMode;
+  autonomousK: number;
+  /** Model's guess at the last revealed position (undefined if model has no data yet). */
+  finalGuess?: string;
+  /** True when the model's response file shows buzz===1 for this tossup. */
+  wouldHaveBuzzed: boolean;
+  /** token_position of the buzz decision, only present when wouldHaveBuzzed is true. */
+  buzzPosition?: number;
+}
+
 export interface TossupResponseRecord {
   tossupIndex: number;
   qid: string;
@@ -503,12 +519,21 @@ export interface TossupResponseRecord {
     guess: string;
     points: number;
     isCorrect: boolean;
+    /** Present when a human buzzed and the moderator delegated the answer to a semi-autonomous AI. */
+    delegation?: {
+      fromPlayerId: string;
+      fromPlayerName: string;
+      fromTeam: string;
+    };
   };
 }
 
 export interface BonusPartRecord {
   teamName: string;
   points: number;
+  /** Whether the team answered this part correctly. Always false for abstain decisions
+   *  (the team did not answer); abstain justification is recoverable from decision + points. */
+  isCorrect: boolean;
   responses: Record<string, string>;
   /** Maps display label → raw system key (response-file identifier) for each AI response. */
   responseIds?: Record<string, string>;
@@ -521,14 +546,33 @@ export interface BonusPartRecord {
 
 export interface BonusResponseRecord {
   bonusIndex: number;
-  correctParts: number[];
   receivingTeamName: string;
   parts: BonusPartRecord[];
+}
+
+export interface ModeratorEvent {
+  type: 'ai_buzz_mode_change' | 'autonomous_k_change' | 'point_adjustment';
+  /** Populated for player-scoped events (buzz mode / k changes); absent for point_adjustment. */
+  playerId?: string;
+  /** Populated for player-scoped events (buzz mode / k changes); absent for point_adjustment. */
+  playerName?: string;
+  /** Populated for ai_buzz_mode_change events. */
+  buzzMode?: AIBuzzMode;
+  /** Populated for autonomous_k_change events. */
+  autonomousK?: number;
+  /** Populated for point_adjustment events: the delta applied to each team's score. */
+  pointAdjustment?: { team_a: number; team_b: number };
+  /** state.wordIndex when the event fired — matches TossupResponseRecord.marker.position convention. */
+  wordPosition: number;
 }
 
 export interface CycleRecord {
   tossupResponses: TossupResponseRecord[];
   bonusResponses: BonusResponseRecord | null;
+  /** Moderator actions (mute/semi/autonomous, k-threshold changes) that occurred during this cycle. */
+  moderatorEvents?: ModeratorEvent[];
+  /** Snapshot of every AI player's model state at tossup resolution time. */
+  tossupModelStates?: TossupModelStateRecord[];
 }
 
 // Server -> Client events
@@ -572,6 +616,7 @@ export interface ClientToServerEvents {
   'game:start': (config: GameConfig) => void;
   'game:load_files': (data: { tossupFile: string; bonusFile?: string; modelDir: string }) => void;
   'moderator:next_word': () => void;
+  'moderator:next_question': () => void;
   'moderator:adjust_points': (data: { team_a: number; team_b: number }) => void;
   'player:buzz': (playerId: string) => void;
   'moderator:answer_ruling': (data: { ruling: AnswerRuling; answer: string }) => void;

@@ -17,13 +17,13 @@ export const DEFAULT_TOSSUP_PENALTY_VALUE_SECOND_TEAM = 0;
 import type { DeflationMode } from '../../../shared/types';
 
 export const DEFAULT_AI_TOSSUP_SCORE_FACTORS = {
-  lightweight: 1.0,
-  midweight: 0.8,
-  heavyweight: 0.4,
+  lightweight: 0.5,
+  midweight: 0.5,
+  heavyweight: 0.5,
 } as const;
 export const DEFAULT_TOSSUP_DEFLATION_MODE: DeflationMode = 'weighted';
 export const DEFAULT_TOSSUP_STATIC_DEFLATION = 5;
-export const DEFAULT_AUTONOMOUS_K = 1;
+export const DEFAULT_AUTONOMOUS_K = 75;
 export const DEFAULT_BONUS_AI_CONSULT_FACTOR = 0.5;
 export const DEFAULT_BONUS_DEFLATION_MODE: DeflationMode = 'static';
 export const DEFAULT_BONUS_STATIC_DEFLATION = 5;

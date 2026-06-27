@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useGame } from '../../context/GameContext';
 import { PlayerManagementDialog } from '../dialogs/PlayerManagementDialog';
 import { maxAiTossupPoints } from '../../utils/aiScoring';
@@ -15,6 +15,54 @@ interface TeamPanelProps {
   buzzingPlayer: string | null;
   aiBuzzModes: Record<string, AIBuzzMode>;
   aiAutonomousK: Record<string, number>;
+}
+
+function KInput({ playerId, k }: { playerId: string; k: number }) {
+  const { setAutonomousK } = useGame();
+  const [draft, setDraft] = useState(String(k));
+
+  useEffect(() => { setDraft(String(k)); }, [k]);
+
+  const commit = () => {
+    const parsed = parseInt(draft, 10);
+    const clamped = isNaN(parsed) ? k : Math.max(1, parsed);
+    setAutonomousK(playerId, clamped);
+    setDraft(String(clamped));
+  };
+
+  return (
+    <div
+      className="flex items-center rounded-md overflow-hidden border border-gray-200"
+      title="Autonomous AI cannot buzz until the k-th token is revealed (k=1 means no gate)"
+    >
+      <button
+        onClick={() => setAutonomousK(playerId, k - 1)}
+        disabled={k <= 1}
+        aria-label="Decrease k"
+        className="px-1.5 py-1 text-xs bg-white text-gray-600 hover:bg-gray-100 disabled:opacity-40"
+      >
+        −
+      </button>
+      <span className="pl-1.5 text-xs font-mono bg-gray-50 text-gray-500 select-none">k=</span>
+      <input
+        type="number"
+        min={1}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+        className="w-9 pr-1 py-1 text-xs font-mono bg-gray-50 text-gray-700 text-center outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        aria-label="k value"
+      />
+      <button
+        onClick={() => setAutonomousK(playerId, k + 1)}
+        aria-label="Increase k"
+        className="px-1.5 py-1 text-xs bg-white text-gray-600 hover:bg-gray-100"
+      >
+        +
+      </button>
+    </div>
+  );
 }
 
 const BUZZ_MODE_OPTIONS: { value: AIBuzzMode; label: string; title: string }[] = [
@@ -194,29 +242,7 @@ export function TeamPanel({
 
                     {/* Autonomous "buzz after k tokens" selector (only in Auto mode) */}
                     {mode === 'autonomous' && (
-                      <div
-                        className="flex items-center rounded-md overflow-hidden border border-gray-200"
-                        title="Autonomous AI cannot buzz until the k-th token is revealed (k=1 means no gate)"
-                      >
-                        <button
-                          onClick={() => setAutonomousK(player.player_id, k - 1)}
-                          disabled={k <= 1}
-                          aria-label={`Decrease k for ${player.name}`}
-                          className="px-1.5 py-1 text-xs bg-white text-gray-600 hover:bg-gray-100 disabled:opacity-40"
-                        >
-                          −
-                        </button>
-                        <span className="px-1.5 py-1 text-xs font-mono bg-gray-50 text-gray-700">
-                          k={k}
-                        </span>
-                        <button
-                          onClick={() => setAutonomousK(player.player_id, k + 1)}
-                          aria-label={`Increase k for ${player.name}`}
-                          className="px-1.5 py-1 text-xs bg-white text-gray-600 hover:bg-gray-100"
-                        >
-                          +
-                        </button>
-                      </div>
+                      <KInput playerId={player.player_id} k={k} />
                     )}
 
                     <div className="flex rounded-md overflow-hidden border border-gray-200">

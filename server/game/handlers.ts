@@ -286,6 +286,22 @@ export function setupGameHandlers(
     if (engine) engine.playTossup(tossupIndex);
   });
 
+  socket.on('moderator:next_question', () => {
+    if (!roomManager.isModerator(socket.id)) return;
+
+    const room = roomManager.getRoomForSocket(socket.id);
+    if (!room) return;
+
+    const engine = gameEngines.get(room.code);
+    if (!engine) return;
+    // A buzz is awaiting a ruling — advancing now would drop it from the cycle log.
+    if (engine.getState().phase === 'answer_review') {
+      console.warn('Ignoring next_question: a buzz is pending a ruling.');
+      return;
+    }
+    engine.nextQuestion();
+  });
+
   socket.on('moderator:play_bonus', (data: { bonusIndex: number; owner: 'team_a' | 'team_b' }) => {
     if (!roomManager.isModerator(socket.id)) return;
 

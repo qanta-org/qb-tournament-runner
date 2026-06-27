@@ -285,6 +285,31 @@ export class Buzzes {
   }
 
   /**
+   * Find the earliest token position at or before `maxPosition` where the system
+   * signalled a buzz (buzz !== 0). Returns undefined if it never buzzed by then.
+   *
+   * Unlike getTossupGuesses (which returns only the latest row at-or-before a
+   * position), this scans all rows so a later buzz=0 row cannot mask an earlier
+   * buzz=1 decision.
+   */
+  getFirstBuzzPosition(
+    questionId: string,
+    system: string,
+    maxPosition: number
+  ): number | undefined {
+    const guesses = this._buzzes.get(questionId)?.get(system);
+    if (!guesses) return undefined;
+
+    let earliest: number | undefined;
+    for (const [pos, response] of guesses) {
+      if (pos <= maxPosition && response.buzz && (earliest === undefined || pos < earliest)) {
+        earliest = pos;
+      }
+    }
+    return earliest;
+  }
+
+  /**
    * Get bonus guesses for a question part
    */
   getBonusGuesses(questionId: string, partNum: number): BonusResponse[] {

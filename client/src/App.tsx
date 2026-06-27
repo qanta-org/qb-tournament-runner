@@ -9,6 +9,7 @@ import { TournamentWizard } from './components/tournament/TournamentWizard';
 import { TournamentDashboard } from './components/tournament/TournamentDashboard';
 import { TournamentGameSetup } from './components/tournament/TournamentGameSetup';
 import { BracketSandbox } from './components/test/BracketSandbox';
+import { ModelDeflationCalculator } from './components/tools/ModelDeflationCalculator';
 
 function AppContent() {
   const {
@@ -31,6 +32,9 @@ function AppContent() {
   // Test / sandbox routes
   if (location.pathname === '/test/brackets') {
     return <BracketSandbox />;
+  }
+  if (location.pathname === '/tools/model-deflation') {
+    return <ModelDeflationCalculator />;
   }
 
   // Tournament routes

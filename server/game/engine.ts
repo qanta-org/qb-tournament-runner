@@ -10,6 +10,7 @@ import type {
   BonusResponse,
   CycleRecord,
   TossupResponseRecord,
+  TossupModelStateRecord,
   BonusResponseRecord,
   QuestionResult,
   QuestionOutcome,
@@ -52,6 +53,10 @@ export class GameEngine {
   // Cycle records for logging
   private currentRecord: CycleRecord | null = null;
   private outputDir: string = '';
+  private savedCycles = new Map<number, CycleRecord>();
+  private currentTossupIndex = -1;
+  /** Original buzzer captured before the first setBuzzSource delegation; null if no delegation occurred. */
+  private pendingDelegation: { playerId: string; playerName: string; team: string } | null = null;
 
   constructor(config: GameConfig, onStateUpdate: StateUpdateCallback) {
     this.config = config;
@@ -349,6 +354,10 @@ export class GameEngine {
   nextQuestion(): void {
     // Save current record if exists
     if (this.currentRecord && this.state.currentTossupNum > 0) {
+      // Catch-all: ensure every saved cycle has a model-state snapshot, even when
+      // the cycle is left via a skip path (playTossup mid-stream) that never reached
+      // handleAnswerRuling / endTossupQuestion. Idempotent — a no-op if already captured.
+      this.captureModelStates();
       this.saveRecord();
     }
 
@@ -421,19 +430,18 @@ export class GameEngine {
       : this.config.default_points_value;
 
     // Initialize record
+    this.currentTossupIndex = this.state.currentTossupNum - 1;
     this.currentRecord = {
       tossupResponses: [],
       bonusResponses: null,
     };
+    this.pendingDelegation = null;
 
     this.emitState();
 
     // Start auto-streaming if enabled
     if (this.config.auto_stream) {
       this.startAutoStream();
-    } else {
-      // In manual mode, reveal first token
-      this.revealNextWord();
     }
   }
 
@@ -657,6 +665,18 @@ export class GameEngine {
       // Only AIs explicitly in semi-autonomous mode may be delegated to.
       if (this.getAiBuzzMode(playerId) !== 'semi') return { changed: false };
 
+      // Capture the original buzzer on first delegation only (preserves the chain's root).
+      if (this.pendingDelegation === null) {
+        const origId = this.state.buzzingPlayer;
+        const origPlayer = this.players.get(origId);
+        const origTeamId = this.teamAssignment.get(origId)!;
+        this.pendingDelegation = {
+          playerId: origId,
+          playerName: origPlayer?.name ?? origId,
+          team: origTeamId === 'team_a' ? this.config.team_a.name : this.config.team_b.name,
+        };
+      }
+
       const kwargs = target.extra_kwargs as { tossup_model: string };
       // Latest guess at or before the current revealed position (even if buzz === 0).
       const position = Math.max(0, this.state.tokenIndex - 1);
@@ -667,7 +687,8 @@ export class GameEngine {
       this.state.currentGuesses = Array.from(guesses.values());
       this.state.buzzingPlayerGuess = guess ? guess.guess : '';
     } else {
-      // Back to a human answerer; the moderator enters the guess later.
+      // Back to a human answerer; clear any pending delegation.
+      this.pendingDelegation = null;
       this.state.buzzingPlayer = playerId;
       this.state.buzzingPlayerGuess = null;
     }
@@ -742,13 +763,25 @@ export class GameEngine {
           guess: answer,
           points,
           isCorrect,
+          ...(this.pendingDelegation !== null
+            ? {
+                delegation: {
+                  fromPlayerId: this.pendingDelegation.playerId,
+                  fromPlayerName: this.pendingDelegation.playerName,
+                  fromTeam: this.pendingDelegation.team,
+                },
+              }
+            : {}),
         },
       };
       this.currentRecord.tossupResponses.push(responseRecord);
     }
 
-    // Clear buzzing player
+    // Clear buzzing player. The delegation has been consumed into the record above,
+    // so clear it now — otherwise a later buzz on the same tossup (reject-resume or
+    // the other team's buzz) would inherit this stale delegation.
     this.state.buzzingPlayer = null;
+    this.pendingDelegation = null;
 
     if (isCorrect) {
       // Calculate total score changes from all responses (including penalties)
@@ -769,6 +802,7 @@ export class GameEngine {
       const previousScore = { team_a: teamAScore, team_b: teamBScore };
       // Update tossup result - the team that got it right
       this.updateTossupResult(this.state.currentTossupNum - 1, playerTeam, previousScore);
+      this.captureModelStates();
 
       // Check if we have bonus questions
       if (this.bonusIds.length > 0 && this.state.currentBonusNum < this.bonusIds.length) {
@@ -809,6 +843,7 @@ export class GameEngine {
     this.state.tokenIndex = this.currentTossupTokens.length;
     this.state.wordIndex = this.currentTossupTokens.length;
     this.state.revealedTossupTokens = [...this.currentTossupTokens];
+    this.captureModelStates();
 
     // Mark as dead if not already marked (could be marked in handleAnswerRuling)
     const currentResult = this.state.tossupResults.find(r => r.index === this.state.currentTossupNum - 1);
@@ -830,6 +865,11 @@ export class GameEngine {
       // Store total score changes (usually negative for penalties)
       this.updateTossupResult(this.state.currentTossupNum - 1, 'dead', { team_a: teamAScore, team_b: teamBScore });
     }
+
+    // Tossup N is dead → skip bonus slot N so the next tossup gets the right
+    // corresponding bonus. currentTossupNum is already N+1 (1-indexed), so
+    // setting currentBonusNum to match advances it past the skipped slot.
+    this.state.currentBonusNum = this.state.currentTossupNum;
 
     this.emitState();
   }
@@ -885,7 +925,6 @@ export class GameEngine {
     if (this.currentRecord) {
       this.currentRecord.bonusResponses = {
         bonusIndex: this.state.currentBonusNum - 1,
-        correctParts: [],
         receivingTeamName:
           owner === 'team_a' ? this.config.team_a.name : this.config.team_b.name,
         parts: [],
@@ -996,6 +1035,9 @@ export class GameEngine {
             ? this.config.team_a.name
             : this.config.team_b.name,
         points,
+        // For abstain, `correct` means "nobody had the answer", not that the team
+        // answered — so isCorrect is only true when the team actually answered correctly.
+        isCorrect: decision !== 'abstain' && correct,
         responses: bonusResponsesLog,
         responseIds: shouldLogBonusAi ? bonusResponseIdsLog : undefined,
         initialGuess:
@@ -1007,9 +1049,8 @@ export class GameEngine {
         aiRevealed: this.state.bonusAiRevealed,
       });
 
-      if (points > 0) {
-        this.currentRecord.bonusResponses.correctParts.push(partIndex);
-      }
+      // Checkpoint: persist partial bonus progress in case of crash.
+      this.saveRecord();
     }
 
     // Enter the per-part reveal screen instead of jumping straight ahead.
@@ -1081,6 +1122,13 @@ export class GameEngine {
       return;
     }
 
+    // A buzz is awaiting a ruling — advancing now would drop it from the cycle log.
+    // Require the moderator to rule first.
+    if (this.state.phase === 'answer_review') {
+      console.warn('Cannot jump tossups while a buzz is pending a ruling.');
+      return;
+    }
+
     this.stopAutoStream();
 
     // Mark current tossup as skipped if it was pending
@@ -1104,8 +1152,11 @@ export class GameEngine {
     // Reset the target question to pending (allow replay)
     this.updateTossupResult(tossupIndex, 'pending');
 
-    // Jump to the question (nextQuestion will increment, so set to index)
+    // Jump to the question (nextQuestion will increment, so set to index).
+    // Also sync currentBonusNum so a correct answer on this tossup awards
+    // the corresponding bonus[tossupIndex] rather than whatever was next.
     this.state.currentTossupNum = tossupIndex;
+    this.state.currentBonusNum = tossupIndex;
     this.nextQuestion();
   }
 
@@ -1120,6 +1171,10 @@ export class GameEngine {
     }
 
     this.stopAutoStream();
+
+    // Checkpoint tossup + any partial bonus data before startBonusQuestion
+    // overwrites bonusResponses in-place.
+    this.saveRecord();
 
     // Mark current bonus as skipped if it was pending
     if (this.state.currentBonusNum > 0) {
@@ -1142,6 +1197,17 @@ export class GameEngine {
     // Reset the target question to pending (allow replay)
     this.updateBonusResult(bonusIndex, 'pending');
 
+    // Retarget the cycle record to bonusIndex's cycle (cycle key == question index)
+    // so the replayed bonus is logged under the correct tossup/bonus pairing instead
+    // of overwriting whatever cycle we happened to be on. Reload the existing cycle so
+    // its tossupResponses / tossupModelStates are preserved; startBonusQuestion only
+    // resets the bonus portion below.
+    this.currentTossupIndex = bonusIndex;
+    const existing = this.savedCycles.get(bonusIndex);
+    this.currentRecord = existing
+      ? (JSON.parse(JSON.stringify(existing)) as CycleRecord)
+      : { tossupResponses: [], bonusResponses: null };
+
     // Start the bonus question
     this.startBonusQuestion(owner, bonusIndex);
   }
@@ -1152,6 +1218,13 @@ export class GameEngine {
   adjustPoints(adjustments: { team_a: number; team_b: number }): void {
     this.state.scores.team_a += adjustments.team_a;
     this.state.scores.team_b += adjustments.team_b;
+    if (this.currentRecord) {
+      (this.currentRecord.moderatorEvents ??= []).push({
+        type: 'point_adjustment',
+        pointAdjustment: adjustments,
+        wordPosition: this.state.wordIndex,
+      });
+    }
     this.emitState();
   }
 
@@ -1162,6 +1235,15 @@ export class GameEngine {
     const player = this.players.get(playerId);
     if (!player || player.type !== 'ai') return;
     this.state.aiBuzzModes[playerId] = mode;
+    if (this.currentRecord) {
+      (this.currentRecord.moderatorEvents ??= []).push({
+        type: 'ai_buzz_mode_change',
+        playerId,
+        playerName: player.name,
+        buzzMode: mode,
+        wordPosition: this.state.wordIndex,
+      });
+    }
     this.emitState();
   }
 
@@ -1174,6 +1256,15 @@ export class GameEngine {
     if (!player || player.type !== 'ai') return;
     const next = Math.max(1, Math.floor(Number.isFinite(k) ? k : 1));
     this.state.aiAutonomousK[playerId] = next;
+    if (this.currentRecord) {
+      (this.currentRecord.moderatorEvents ??= []).push({
+        type: 'autonomous_k_change',
+        playerId,
+        playerName: player.name,
+        autonomousK: next,
+        wordPosition: this.state.wordIndex,
+      });
+    }
     this.emitState();
   }
 
@@ -1326,6 +1417,42 @@ export class GameEngine {
   }
 
   /**
+   * Snapshot every AI player's tossup model state at resolution time.
+   * Idempotent: the first call per cycle wins, so the precise buzz/dead position
+   * captured by handleAnswerRuling / endTossupQuestion is never overwritten by the
+   * catch-all call in nextQuestion.
+   */
+  private captureModelStates(): void {
+    if (!this.currentRecord || !this.state.currentTossupId) return;
+    if (this.currentRecord.tossupModelStates) return;
+    const position = Math.max(0, this.state.tokenIndex - 1);
+    const guesses = this.buzzes.getTossupGuesses(this.state.currentTossupId, position);
+    const tossupId = this.state.currentTossupId;
+    this.currentRecord.tossupModelStates = this.getAIPlayers().map((player): TossupModelStateRecord => {
+      const kwargs = player.extra_kwargs as AIPlayerKwargs;
+      const modelId = kwargs.tossup_model ?? '';
+      const guess = guesses.get(modelId);
+      const teamId = this.teamAssignment.get(player.player_id)!;
+      // wouldHaveBuzzed scans all rows so a later buzz=0 cannot mask an earlier buzz=1.
+      const firstBuzz = modelId
+        ? this.buzzes.getFirstBuzzPosition(tossupId, modelId, position)
+        : undefined;
+      return {
+        playerId: player.player_id,
+        playerName: player.name,
+        team: teamId === 'team_a' ? this.config.team_a.name : this.config.team_b.name,
+        tossupModelId: modelId,
+        tossupModelName: tossupModelLabel(kwargs),
+        buzzMode: this.getAiBuzzMode(player.player_id),
+        autonomousK: this.getAiAutonomousK(player.player_id),
+        finalGuess: guess?.guess,
+        wouldHaveBuzzed: firstBuzz !== undefined,
+        buzzPosition: firstBuzz,
+      };
+    });
+  }
+
+  /**
    * End the game
    */
   private endGame(): void {
@@ -1345,13 +1472,35 @@ export class GameEngine {
   }
 
   /**
-   * Save the current cycle record
+   * Upsert the current cycle record into savedCycles by tossupIndex, then
+   * atomically rewrite cycles.jsonl in index order.
    */
   private saveRecord(): void {
-    if (!this.currentRecord || !this.outputDir) return;
+    if (!this.currentRecord || !this.outputDir || this.currentTossupIndex < 0) return;
+    // Deep-clone so subsequent in-place mutations of currentRecord (e.g.
+    // startBonusQuestion resetting bonusResponses after playBonus calls this)
+    // don't corrupt the already-saved map entry.
+    this.savedCycles.set(
+      this.currentTossupIndex,
+      JSON.parse(JSON.stringify(this.currentRecord)) as CycleRecord,
+    );
+    this.flushCycles();
+  }
 
+  /**
+   * Rewrite cycles.jsonl from savedCycles, sorted by tossupIndex ascending.
+   * Uses a tmp+rename pattern so a mid-write crash leaves the original intact.
+   */
+  private flushCycles(): void {
+    if (!this.outputDir) return;
     const filePath = path.join(this.outputDir, 'cycles.jsonl');
-    fs.appendFileSync(filePath, JSON.stringify(this.currentRecord) + '\n');
+    const lines = [...this.savedCycles.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, record]) => JSON.stringify(record))
+      .join('\n');
+    const tmpPath = filePath + '.tmp';
+    fs.writeFileSync(tmpPath, lines ? lines + '\n' : '');
+    fs.renameSync(tmpPath, filePath);
   }
 
   /**

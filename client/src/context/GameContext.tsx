@@ -46,6 +46,7 @@ interface GameContextValue {
   startGame: (config: GameConfig) => void;
   buzz: (playerId: string) => void;
   nextWord: () => void;
+  nextQuestion: () => void;
   submitAnswerRuling: (ruling: AnswerRuling, answer: string) => void;
   adjustPoints: (adjustments: { team_a: number; team_b: number }) => void;
   setAiBuzzMode: (playerId: string, mode: AIBuzzMode) => void;
@@ -238,6 +239,10 @@ export function GameProvider({ children }: GameProviderProps) {
     socket.emit('moderator:next_word');
   }, []);
 
+  const nextQuestion = useCallback(() => {
+    socket.emit('moderator:next_question');
+  }, []);
+
   const submitAnswerRuling = useCallback((ruling: AnswerRuling, answer: string) => {
     socket.emit('moderator:answer_ruling', { ruling, answer });
   }, []);
@@ -370,6 +375,7 @@ export function GameProvider({ children }: GameProviderProps) {
     startGame,
     buzz,
     nextWord,
+    nextQuestion,
     submitAnswerRuling,
     adjustPoints,
     setAiBuzzMode,

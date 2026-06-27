@@ -10,6 +10,7 @@ export function ModeratorControls() {
     gameState,
     gameConfig,
     nextWord,
+    nextQuestion,
     advanceBonusStage,
     advanceBonusPart,
     revealBonusAi,
@@ -122,8 +123,15 @@ export function ModeratorControls() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         {/* Left side: Navigation controls */}
         <div className="flex items-center gap-2">
-          {/* Next word button (manual mode) */}
-          {isTossupPhase && !gameConfig.auto_stream && (
+          {/* Advance after dead tossup (both teams negged or question fully read) */}
+          {gameState.phase === 'tossup_ready' && (
+            <button className="btn btn-primary" onClick={nextQuestion}>
+              Next Question →
+            </button>
+          )}
+
+          {/* Next word button (manual mode, while streaming) */}
+          {gameState.phase === 'tossup_streaming' && !gameConfig.auto_stream && (
             <button
               className="btn btn-primary"
               onClick={handleNextWord}

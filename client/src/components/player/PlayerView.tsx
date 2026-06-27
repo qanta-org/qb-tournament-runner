@@ -133,6 +133,7 @@ export function PlayerView() {
             <TeamTossupConfidences
               teamId="team_a"
               guesses={gameState.currentGuesses}
+              buzzingPlayer={gameState.buzzingPlayer}
             />
           )}
 
@@ -325,6 +326,7 @@ export function PlayerView() {
             <TeamTossupConfidences
               teamId="team_b"
               guesses={gameState.currentGuesses}
+              buzzingPlayer={gameState.buzzingPlayer}
             />
           )}
 
@@ -452,9 +454,11 @@ function PlayerTeamPanel({
 function TeamTossupConfidences({
   teamId,
   guesses,
+  buzzingPlayer,
 }: {
   teamId: TeamId;
   guesses: TossupResponse[];
+  buzzingPlayer: string | null;
 }) {
   const { gameConfig, getTeamColor } = useGame();
   if (!gameConfig) return null;
@@ -485,7 +489,9 @@ function TeamTossupConfidences({
                 <div className="text-[11px] text-gray-400 truncate">{tossupModelLabel(kwargs)}</div>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
-                {guess?.buzz && <span className="text-red-500 text-xs">🚨</span>}
+                {buzzingPlayer === player.player_id && (
+                  <span className="text-red-500 text-xs">🚨</span>
+                )}
                 <span className="font-bold text-sm" style={{ color: confColor }}>
                   {guess ? `${Math.round(guess.confidence * 100)}%` : '–'}
                 </span>
