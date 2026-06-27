@@ -543,13 +543,17 @@ export class GameEngine {
       if (mode === 'muted' || mode === 'semi') continue;
       // Autonomous AIs cannot buzz before their k-th token is revealed (gate >= k).
       const k = this.getAiAutonomousK(playerId);
-      if (currentPosition < k) continue;
+      const lastIndex = this.currentTossupTokens.length - 1;
+      const isLastWord = currentPosition === lastIndex;
+      // A question too short to ever reach token k can never satisfy the gate, so the
+      // AI is instead forced to trigger on the final token.
+      const questionShorterThanK = k > lastIndex;
+      if (currentPosition < k && !(questionShorterThanK && isLastWord)) continue;
 
       // Skip if team already buzzed
       if (this.state.teamBuzzed[playerTeam]) continue;
 
       // Suppress early AI second buzzes
-      const isLastWord = this.state.wordIndex === this.currentTossupTokens.length - 1;
       if (this.state.teamBuzzed[otherTeam] && !isLastWord) {
         if (this.config.suppress_early_ai_second_buzzes) {
           continue;
@@ -557,11 +561,14 @@ export class GameEngine {
       }
 
       // Discard early buzzes: a buzz decision made before token k does not count
-      // (a guess held over from before the gate cannot trigger a buzz). The forced
-      // second-team buzz on the last word is exempt and uses the latest guess.
+      // (a guess held over from before the gate cannot trigger a buzz). Two forced
+      // last-word cases are exempt and use the latest guess regardless of its buzz
+      // signal: the second-team bounce-back, and a question too short to reach k.
       const buzzedAtOrAfterK =
         !!guess.buzz && guess.token_position !== undefined && guess.token_position >= k;
-      if (buzzedAtOrAfterK || (this.state.teamBuzzed[otherTeam] && isLastWord)) {
+      const forcedLastWord =
+        isLastWord && (this.state.teamBuzzed[otherTeam] || questionShorterThanK);
+      if (buzzedAtOrAfterK || forcedLastWord) {
         validBuzzes.push([playerId, guess]);
       }
     }
