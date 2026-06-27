@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+from collections import defaultdict
 
 import pandas as pd
 
@@ -29,24 +30,37 @@ def _read_jsonl(path: str) -> list:
     return rows
 
 
-def convert_buzz_jsonl(in_path: str, out_path: str) -> int:
-    records = _read_jsonl(in_path)
-    rows = []
+def _flatten_buzz_records(records: list):
     for rec in records:
         qid = rec["qid"]
         for ro in rec.get("run_outputs", []):
-            rows.append(
-                {
-                    "question_id": qid,
-                    "token_position": ro.get("token_position"),
-                    "guess": ro.get("guess", ""),
-                    "confidence": ro.get("confidence"),
-                    "buzz": int(bool(ro.get("buzz"))),
-                    "correct": int(bool(ro.get("correct"))),
-                }
-            )
-    df = pd.DataFrame(
-        rows,
+            yield {
+                "question_id": qid,
+                "token_position": ro.get("token_position"),
+                "guess": ro.get("guess", ""),
+                "confidence": ro.get("confidence"),
+                "buzz": int(bool(ro.get("buzz"))),
+                "correct": int(bool(ro.get("correct"))),
+            }
+
+
+def _flatten_bonus_records(records: list):
+    for rec in records:
+        qid = rec["qid"]
+        for po in rec.get("part_outputs", []):
+            yield {
+                "question_id": qid,
+                "part_number": po.get("number"),
+                "guess": po.get("guess", ""),
+                "confidence": po.get("confidence"),
+                "explanation": po.get("explanation", ""),
+                "correct": int(bool(po.get("correct"))),
+            }
+
+
+def convert_buzz_df(records: list, out_path: str) -> int:
+    out_df = pd.DataFrame(
+        _flatten_buzz_records(records),
         columns=[
             "question_id",
             "token_position",
@@ -56,28 +70,13 @@ def convert_buzz_jsonl(in_path: str, out_path: str) -> int:
             "correct",
         ],
     )
-    df.to_csv(out_path, index=False)
-    return len(rows)
+    out_df.to_csv(out_path, index=False)
+    return len(out_df)
 
 
-def convert_bonus_jsonl(in_path: str, out_path: str) -> int:
-    records = _read_jsonl(in_path)
-    rows = []
-    for rec in records:
-        qid = rec["qid"]
-        for po in rec.get("part_outputs", []):
-            rows.append(
-                {
-                    "question_id": qid,
-                    "part_number": po.get("number"),
-                    "guess": po.get("guess", ""),
-                    "confidence": po.get("confidence"),
-                    "explanation": po.get("explanation", ""),
-                    "correct": int(bool(po.get("correct"))),
-                }
-            )
-    df = pd.DataFrame(
-        rows,
+def convert_bonus_df(records: list, out_path: str) -> int:
+    out_df = pd.DataFrame(
+        _flatten_bonus_records(records),
         columns=[
             "question_id",
             "part_number",
@@ -87,8 +86,8 @@ def convert_bonus_jsonl(in_path: str, out_path: str) -> int:
             "correct",
         ],
     )
-    df.to_csv(out_path, index=False)
-    return len(rows)
+    out_df.to_csv(out_path, index=False)
+    return len(out_df)
 
 
 def ensure_dir(path: str):
@@ -97,46 +96,87 @@ def ensure_dir(path: str):
 
 def strip_bonus_prefix(fname: str) -> str:
     # Matches: bonus__YYYYMMDD_HHMMSS__whatever.bonus.jsonl
-    match = re.match(r"bonus__\d{8}_\d{6}__(.+)", fname)
-    return match.group(1) if match else fname
+    match = re.match(r"bonus(?:__hf)?__\d{8}_\d{6}__(.+)", fname)
+    fname = match.group(1) if match else fname
+    return fname.split("/")[-1].removesuffix(".jsonl")
 
 
 def strip_tossup_prefix(fname: str) -> str:
     # Matches: tossup__YYYYMMDD_HHMMSS__whatever.buzz.jsonl
     match = re.match(r"tossup__\d{8}_\d{6}__(.+)", fname)
-    return match.group(1) if match else fname
+    fname = match.group(1) if match else fname
+    return fname.split("/")[-1].removesuffix(".jsonl")
 
 
 def main(tournament_dir: str):
-    # Find input/output dirs
-    bonus_in_dir = os.path.join(tournament_dir, "Outputs", "Bonuses")
-    tossup_in_dir = os.path.join(tournament_dir, "Outputs", "Tossups")
-    responses_dir = os.path.join(tournament_dir, "responses")
+    # Enumerate over packets
+    outputs_dir = os.path.join("data", tournament_dir, "Outputs")
+    packet_dirpaths = glob.glob(os.path.join(outputs_dir, "Packet *"))
+    print(f"Found {len(packet_dirpaths)} packets in {outputs_dir}")
+    bonus_records = defaultdict(list)
+    tossup_records = defaultdict(list)
+
+    for packet_dirpath in packet_dirpaths:
+        packet_dir = os.path.basename(packet_dirpath)
+        packet_number = int(packet_dir.split("-")[0].removeprefix("Packet ").strip())
+        bonus_in_dir = os.path.join(packet_dirpath, "Bonus")
+        for in_path in sorted(glob.glob(os.path.join(bonus_in_dir, "*.jsonl"))):
+            records = _read_jsonl(in_path)
+            model_name = strip_bonus_prefix(os.path.basename(in_path))
+            bonus_records[model_name].extend(records)
+
+        tossup_in_dir = os.path.join(packet_dirpath, "Tossup")
+        for in_path in sorted(glob.glob(os.path.join(tossup_in_dir, "*.jsonl"))):
+            records = _read_jsonl(in_path)
+            model_name = strip_tossup_prefix(os.path.basename(in_path))
+            tossup_records[model_name].extend(records)
+
+    responses_dir = os.path.join("data", tournament_dir, "responses")
     ensure_dir(responses_dir)
+    # Print out the model names and check if question_id is unique:
+    print("# Bonus models:", len(bonus_records))
+    for model_name, records in bonus_records.items():
+        print(f"{model_name}: {len(records)} records")
+        if len({r["qid"] for r in records}) != len(records):
+            raise ValueError(f"{model_name} has duplicate question_ids")
+        out_path = os.path.join(responses_dir, f"{model_name}.bonus.csv")
+        convert_bonus_df(records, out_path)
+        print(f"Wrote {len(records)} records to {out_path}")
 
-    # Process bonus files
-    for in_path in sorted(glob.glob(os.path.join(bonus_in_dir, "*.jsonl"))):
-        base_name = os.path.basename(in_path)
-        dest_base = strip_bonus_prefix(base_name)
-        # Destination: responses/{file_stem}.csv, replacing .jsonl with .csv
-        out_name = os.path.splitext(dest_base)[0] + ".bonus.csv"
-        out_path = os.path.join(responses_dir, out_name)
-        n = convert_bonus_jsonl(in_path, out_path)
-        print(f"bonus: {base_name} -> {out_name} ({n} rows)")
+    print("\n# Tossup models:", len(tossup_records))
+    for model_name, records in tossup_records.items():
+        print(f"{model_name}: {len(records)} records")
+        if len({r["qid"] for r in records}) != len(records):
+            raise ValueError(f"{model_name} has duplicate question_ids")
+        out_path = os.path.join(responses_dir, f"{model_name}.buzz.csv")
+        convert_buzz_df(records, out_path)
+        print(f"Wrote {len(records)} records to {out_path}")
 
-    # Process tossup files
-    for in_path in sorted(glob.glob(os.path.join(tossup_in_dir, "*.jsonl"))):
-        base_name = os.path.basename(in_path)
-        dest_base = strip_tossup_prefix(base_name)
-        # Destination: responses/{file_stem}.csv, replacing .jsonl with .csv
-        out_name = os.path.splitext(dest_base)[0] + ".buzz.csv"
-        out_path = os.path.join(responses_dir, out_name)
-        n = convert_buzz_jsonl(in_path, out_path)
-        print(f"buzz : {base_name} -> {out_name} ({n} rows)")
+
+# %%
+def is_running_in_kernel():
+    try:
+        from IPython import get_ipython
+
+        shell = get_ipython()
+        if shell is None:
+            return False
+        if "IPKernelApp" in shell.config:
+            return True  # Jupyter or other kernel
+        if shell.__class__.__name__ == "ZMQInteractiveShell":
+            return True  # Jupyter or qtconsole
+        return False
+    except Exception:
+        return False
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python convert_responses.py <tournament_directory>")
-        sys.exit(1)
-    main(sys.argv[1])
+    if is_running_in_kernel() or len(sys.argv) == 1:
+        print("Running in kernel, defaulting to 'qanta26'")
+        tournament_dir = "qanta26-offline"
+    else:
+        tournament_dir = sys.argv[1]
+    print(f"Converting responses from {tournament_dir}")
+    main(tournament_dir)
+
+# %%

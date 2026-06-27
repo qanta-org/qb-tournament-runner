@@ -166,18 +166,6 @@ def create_packet(
 
 
 # %%
-for packet_idx in range(1, 6):
-    packet_tossups = tossup_ds.filter(lambda x: f"-packet{packet_idx}-" in x["qid"])
-    packet_bonuses = bonus_ds.filter(lambda x: f"-packet{packet_idx}-" in x["qid"])
-    create_packet(
-        packet_tossups, packet_bonuses, packet_idx, tournament_code="qanta26-playtest"
-    )
-
-# %%
-packet_tossups = tossup_ds.filter(lambda x: "-packet" not in x["qid"])
-packet_bonuses = bonus_ds.filter(lambda x: "-packet" not in x["qid"])
-create_packet(packet_tossups, packet_bonuses, 7, tournament_code="qanta26-playtest")
-# %%
 
 
 tossup_packets: dict[int, list[dict]] = defaultdict(list)
@@ -202,6 +190,6 @@ for packet_idx, packets in tqdm(tossup_packets.items(), total=len(tossup_packets
         packets,
         bonus_packets[packet_idx],
         packet_idx,
-        tournament_code="qanta26-playtest",
+        tournament_code="qanta26-offline",
     )
 # %%

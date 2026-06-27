@@ -1,0 +1,8 @@
+pandas
+numpy
+tqdm
+datasets
+rich
+huggingface_hub
+python-dotenv
+loguru
