@@ -16,6 +16,7 @@ import { DEFAULT_GAME_CONFIG } from '../../../../shared/types';
 import { fetchRulePresets, fetchRulePreset, type RulePresetSummary } from '../../api/config';
 import type { DeflationMode, GameConfig } from '../../../../shared/types';
 import { AiModelEditor, buildAiKwargsFromRoster, deriveModelPools } from '../setup/TeamBuilder';
+import { aiPlayerDisplayName } from '../../../../shared/modelLabels';
 import { fetchBonusModelRoster, fetchTossupModelRoster } from '../../api/rosters';
 import {
   buildScheduleRounds,
@@ -106,22 +107,24 @@ function TournamentAiAssignment({
   );
 
   const addRosterAi = (teamId: string, rp: RosterAiPlayer) => {
+    const extra_kwargs = buildTournamentAiKwargs(rp, tossupRoster, bonusRoster);
     const player: Player = {
       player_id: rp.player_id,
-      name: rp.name,
+      name: aiPlayerDisplayName(extra_kwargs),
       type: 'ai',
-      extra_kwargs: buildTournamentAiKwargs(rp, tossupRoster, bonusRoster),
+      extra_kwargs,
     };
     setTeamPlayers(teamId, [...(aiAssignments[teamId] || []), player]);
   };
 
   const addCustomAi = (teamId: string) => {
     const existing = aiAssignments[teamId] || [];
+    const extra_kwargs: AIPlayerKwargs = { tossup_model: '', bonus_model: '', coupled: true };
     const player: Player = {
       player_id: `custom_ai_${teamId}_${Date.now()}`,
-      name: `AI Teammate ${existing.length + 1}`,
+      name: aiPlayerDisplayName(extra_kwargs),
       type: 'ai',
-      extra_kwargs: { tossup_model: '', bonus_model: '', coupled: true },
+      extra_kwargs,
     };
     setTeamPlayers(teamId, [...existing, player]);
   };
@@ -137,18 +140,11 @@ function TournamentAiAssignment({
   ) => {
     setTeamPlayers(
       teamId,
-      (aiAssignments[teamId] || []).map((p) =>
-        p.player_id === playerId
-          ? { ...p, extra_kwargs: { ...(p.extra_kwargs as AIPlayerKwargs), ...next } }
-          : p
-      )
-    );
-  };
-
-  const updateAiName = (teamId: string, playerId: string, name: string) => {
-    setTeamPlayers(
-      teamId,
-      (aiAssignments[teamId] || []).map((p) => (p.player_id === playerId ? { ...p, name } : p))
+      (aiAssignments[teamId] || []).map((p) => {
+        if (p.player_id !== playerId) return p;
+        const extra_kwargs = { ...(p.extra_kwargs as AIPlayerKwargs), ...next };
+        return { ...p, extra_kwargs, name: aiPlayerDisplayName(extra_kwargs) };
+      })
     );
   };
 
@@ -175,12 +171,7 @@ function TournamentAiAssignment({
                     <div key={p.player_id} className="bg-gray-50 rounded-lg p-2">
                       <div className="flex items-center gap-2">
                         <span className="text-base">🤖</span>
-                        <input
-                          type="text"
-                          value={p.name}
-                          onChange={(e) => updateAiName(t.id, p.player_id, e.target.value)}
-                          className="flex-1 min-w-0 text-sm font-medium bg-transparent border-b focus:outline-none"
-                        />
+                        <span className="flex-1 min-w-0 text-sm font-medium truncate">{p.name}</span>
                         <button
                           onClick={() => removeAi(t.id, p.player_id)}
                           className="text-red-500 hover:text-red-700 p-1"

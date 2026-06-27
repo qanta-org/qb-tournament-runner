@@ -10,6 +10,16 @@ export function bonusModelLabel(kwargs: Partial<AIPlayerKwargs>): string {
   return kwargs.bonus_model_name || kwargs.bonus_model || '';
 }
 
+/** Default AI player display name: "{tossup} - {bonus}" from roster model names. */
+export function aiPlayerDisplayName(kwargs: Partial<AIPlayerKwargs>): string {
+  const tossup = tossupModelLabel(kwargs);
+  const bonus = bonusModelLabel(kwargs);
+  if (tossup && bonus) return `${tossup} - ${bonus}`;
+  if (tossup) return tossup;
+  if (bonus) return bonus;
+  return 'AI';
+}
+
 /** Compact summary for setup/review surfaces (shows both names when decoupled). */
 export function aiModelSummary(kwargs: Partial<AIPlayerKwargs>): string {
   const tossup = tossupModelLabel(kwargs);

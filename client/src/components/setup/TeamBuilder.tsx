@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { AIPlayerKwargs, ModelInfo, ModelRosterEntry, Team, Player } from '../../../../shared/types';
-import { aiModelSummaryLines } from '../../../../shared/modelLabels';
+import { aiModelSummaryLines, aiPlayerDisplayName } from '../../../../shared/modelLabels';
 import type { ApiRosterPlayer } from '../../api/rosters';
 import { fetchBonusModelRoster, fetchHumanRoster, fetchTossupModelRoster } from '../../api/rosters';
 
@@ -367,8 +367,6 @@ export function TeamBuilder({
   // Add AI form state
   const [aiTossupModel, setAiTossupModel] = useState('');
   const [aiBonusModel, setAiBonusModel] = useState('');
-  const [aiDisplayName, setAiDisplayName] = useState('');
-  const [aiNameManuallyEdited, setAiNameManuallyEdited] = useState(false);
 
   // Multi-select state for roster
   const [selectedRosterPlayers, setSelectedRosterPlayers] = useState<Set<string>>(new Set());
@@ -501,26 +499,24 @@ export function TeamBuilder({
   const addAIPlayer = () => {
     const tossupEntry = tossupRoster.find((e) => e.model === aiTossupModel);
     const bonusEntry = bonusRoster.find((e) => e.model === aiBonusModel);
-    const name = aiDisplayName.trim() || tossupEntry?.name || bonusEntry?.name || 'AI';
+    const extra_kwargs: AIPlayerKwargs = {
+      tossup_model: aiTossupModel,
+      bonus_model: aiBonusModel,
+      tossup_model_name: tossupEntry?.name,
+      bonus_model_name: bonusEntry?.name,
+      tossup_weight_class: tossupEntry?.weight_class,
+      bonus_weight_class: bonusEntry?.weight_class,
+      coupled: false,
+    };
     const newPlayer: Player = {
       player_id: `custom_ai_${Date.now()}`,
-      name,
+      name: aiPlayerDisplayName(extra_kwargs),
       type: 'ai',
-      extra_kwargs: {
-        tossup_model: aiTossupModel,
-        bonus_model: aiBonusModel,
-        tossup_model_name: tossupEntry?.name,
-        bonus_model_name: bonusEntry?.name,
-        tossup_weight_class: tossupEntry?.weight_class,
-        bonus_weight_class: bonusEntry?.weight_class,
-        coupled: false,
-      } as AIPlayerKwargs,
+      extra_kwargs,
     };
     onChange({ ...team, players: [...team.players, newPlayer] });
     setAiTossupModel('');
     setAiBonusModel('');
-    setAiDisplayName('');
-    setAiNameManuallyEdited(false);
     setShowAddDialog(false);
   };
 
@@ -572,11 +568,11 @@ export function TeamBuilder({
   const updateAiPlayerModels = (playerId: string, next: Partial<AIPlayerKwargs>) => {
     onChange({
       ...team,
-      players: team.players.map((p) =>
-        p.player_id === playerId
-          ? { ...p, extra_kwargs: { ...(p.extra_kwargs as AIPlayerKwargs), ...next } }
-          : p
-      ),
+      players: team.players.map((p) => {
+        if (p.player_id !== playerId) return p;
+        const extra_kwargs = { ...(p.extra_kwargs as AIPlayerKwargs), ...next };
+        return { ...p, extra_kwargs, name: aiPlayerDisplayName(extra_kwargs) };
+      }),
     });
   };
 
@@ -842,12 +838,7 @@ export function TeamBuilder({
                     </label>
                     <RosterModelSelect
                       value={aiTossupModel}
-                      onChange={(modelKey, entry) => {
-                        setAiTossupModel(modelKey);
-                        if (!aiNameManuallyEdited) {
-                          setAiDisplayName(entry?.name ?? '');
-                        }
-                      }}
+                      onChange={(modelKey) => setAiTossupModel(modelKey)}
                       entries={tossupRoster}
                       fallbackOptions={tossupModelNames}
                       allModelNames={allModelNames}
@@ -873,28 +864,21 @@ export function TeamBuilder({
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Display Name
-                    </label>
-                    <input
-                      type="text"
-                      value={aiDisplayName}
-                      onChange={(e) => {
-                        setAiDisplayName(e.target.value);
-                        setAiNameManuallyEdited(true);
-                      }}
-                      placeholder={
-                        tossupRoster.find(e => e.model === aiTossupModel)?.name ||
-                        bonusRoster.find(e => e.model === aiBonusModel)?.name ||
-                        'AI'
-                      }
-                      className="input"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Leave blank to use the tossup model name.
-                    </p>
-                  </div>
+                  {(aiTossupModel || aiBonusModel) && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Display Name
+                      </label>
+                      <p className="text-sm text-gray-800 bg-gray-50 rounded px-3 py-2">
+                        {aiPlayerDisplayName({
+                          tossup_model: aiTossupModel,
+                          bonus_model: aiBonusModel,
+                          tossup_model_name: tossupRoster.find((e) => e.model === aiTossupModel)?.name,
+                          bonus_model_name: bonusRoster.find((e) => e.model === aiBonusModel)?.name,
+                        })}
+                      </p>
+                    </div>
+                  )}
 
                   <button
                     onClick={addAIPlayer}
