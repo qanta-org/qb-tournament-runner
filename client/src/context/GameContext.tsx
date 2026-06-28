@@ -62,6 +62,7 @@ interface GameContextValue {
   canModifyPlayers: () => boolean;
   addPlayer: (teamId: TeamId, player: Player) => Promise<{ success: boolean; error?: string }>;
   removePlayer: (playerId: string) => Promise<{ success: boolean; error?: string }>;
+  updateBuzzerKey: (playerId: string, buzzerKey: string) => Promise<{ success: boolean; error?: string }>;
 
   // Helpers
   getPlayer: (playerId: string) => Player | undefined;
@@ -321,6 +322,17 @@ export function GameProvider({ children }: GameProviderProps) {
     []
   );
 
+  const updateBuzzerKey = useCallback(
+    (playerId: string, buzzerKey: string): Promise<{ success: boolean; error?: string }> => {
+      return new Promise((resolve) => {
+        socket.emit('moderator:update_buzzer_key', { playerId, buzzerKey }, (result) => {
+          resolve(result || { success: false, error: 'No response from server' });
+        });
+      });
+    },
+    []
+  );
+
   // Helpers
   const getPlayer = useCallback(
     (playerId: string): Player | undefined => {
@@ -391,6 +403,7 @@ export function GameProvider({ children }: GameProviderProps) {
     canModifyPlayers,
     addPlayer,
     removePlayer,
+    updateBuzzerKey,
 
     // Helpers
     getPlayer,

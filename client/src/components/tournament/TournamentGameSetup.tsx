@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useGame, TournamentContext } from '../../context/GameContext';
 import { TeamBuilder } from '../setup/TeamBuilder';
+import { BuzzerTestDialog, humanPlayersFromConfig } from '../setup/BuzzerTestDialog';
 import type { GameConfig, ModelInfo, Team, Player } from '../../../../shared/types';
 
 interface TournamentGameSetupProps {
@@ -8,7 +9,8 @@ interface TournamentGameSetupProps {
 }
 
 export function TournamentGameSetup({ tournamentContext }: TournamentGameSetupProps) {
-  const { gameConfig, startGame } = useGame();
+  const { gameConfig, startGame, getTeamColor } = useGame();
+  const [pendingConfig, setPendingConfig] = useState<GameConfig | null>(null);
 
   // Initialize teams from pre-populated config
   const [teamA, setTeamA] = useState<Team>(
@@ -106,7 +108,7 @@ export function TournamentGameSetup({ tournamentContext }: TournamentGameSetupPr
       multimodal_reveal_lockout_seconds: settings.multimodalRevealLockoutSeconds,
     };
 
-    startGame(config);
+    setPendingConfig(config);
   };
 
   const canStart = teamA.players.length > 0 && teamB.players.length > 0 && gameConfig;
@@ -318,6 +320,21 @@ export function TournamentGameSetup({ tournamentContext }: TournamentGameSetupPr
           </div>
         )}
       </div>
+
+      {pendingConfig && (
+        <BuzzerTestDialog
+          humanPlayers={humanPlayersFromConfig(
+            pendingConfig,
+            getTeamColor('team_a'),
+            getTeamColor('team_b')
+          )}
+          onConfirm={() => {
+            startGame(pendingConfig);
+            setPendingConfig(null);
+          }}
+          onCancel={() => setPendingConfig(null)}
+        />
+      )}
     </div>
   );
 }

@@ -1,15 +1,20 @@
 {
   "name": "QANTA 2026",
-  "description": "QANTA 2026 rules: weighted AI tossup scoring by model weight class (LW 100% / MW 80% / HW 40%), per-part 3-way bonus scoring (own / consult-AI / abstain) with weighted consult deflation (LW -1 / MW -2 / HW -3).",
+  "description": "QANTA 2026 rules: AI tossups gated to k=75 with weight-class buzz periods (LW every 3rd / MW every 2nd / HW every row) and flat 50% tossup scoring; per-part 3-way bonus scoring (own / consult-AI / abstain) with weighted consult deflation (LW -1 / MW -2 / HW -3).",
   "config": {
     "ai_tossup_score_factors": {
-      "lightweight": 1.0,
-      "midweight": 0.8,
-      "heavyweight": 0.4
+      "lightweight": 0.5,
+      "midweight": 0.5,
+      "heavyweight": 0.5
     },
     "tossup_deflation_mode": "weighted",
     "tossup_static_deflation": 5,
-    "autonomous_default_k": 1,
+    "autonomous_default_k": 75,
+    "ai_buzz_periods": {
+      "lightweight": 1,
+      "midweight": 1,
+      "heavyweight": 2
+    },
     "bonus_ai_consult_factor": 0.5,
     "bonus_deflation_mode": "weighted",
     "bonus_static_deflation": 5,

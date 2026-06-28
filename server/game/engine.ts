@@ -18,9 +18,12 @@ import type {
   AIBuzzMode,
   BonusPartDecision,
   AIPlayerKwargs,
+  AIWeightClass,
 } from '../../shared/types.js';
 import { aiTossupPoints, bonusConsultPoints } from '../../shared/scoring.js';
 import { bonusModelLabel, tossupModelLabel } from '../../shared/modelLabels.js';
+import { tossupWeightClass } from '../../shared/aiWeightClass.js';
+import { isFiringPoint, selectBuzzWinnerIndex } from './buzzSelection.js';
 import { createInitialGameState } from '../../shared/types.js';
 import { Questions } from '../data/questions.js';
 import { Buzzes } from '../data/buzzes.js';
@@ -519,11 +522,12 @@ export class GameEngine {
    * Check if any AI players should buzz
    */
   private checkForAIBuzzes(guesses: Map<string, TossupResponse>): void {
-    // [playerId, guess] for each AI player that is eligible to buzz this token.
-    const validBuzzes: Array<[string, TossupResponse]> = [];
+    // [playerId, guess, weightClass] for each AI player eligible to buzz this token.
+    const validBuzzes: Array<[string, TossupResponse, AIWeightClass]> = [];
 
     // 0-indexed position of the token currently being processed.
     const currentPosition = this.state.tokenIndex;
+    const questionId = this.state.currentTossupId!;
 
     // Iterate over AI players (not over guess systems) so that multiple teammates
     // sharing a tossup model are each evaluated independently.
@@ -531,7 +535,8 @@ export class GameEngine {
       const playerId = player.player_id;
       const kwargs = player.extra_kwargs as { tossup_model: string };
       if (!kwargs.tossup_model) continue;
-      const guess = guesses.get(kwargs.tossup_model);
+      const model = kwargs.tossup_model;
+      const guess = guesses.get(model);
       if (!guess) continue;
 
       const playerTeam = this.teamAssignment.get(playerId)!;
@@ -560,22 +565,47 @@ export class GameEngine {
         }
       }
 
-      // Discard early buzzes: a buzz decision made before token k does not count
-      // (a guess held over from before the gate cannot trigger a buzz). Two forced
-      // last-word cases are exempt and use the latest guess regardless of its buzz
-      // signal: the second-team bounce-back, and a question too short to reach k.
-      const buzzedAtOrAfterK =
-        !!guess.buzz && guess.token_position !== undefined && guess.token_position >= k;
+      const weightClass =
+        tossupWeightClass(player.extra_kwargs as AIPlayerKwargs) ?? 'lightweight';
+
+      // Two forced last-word cases are exempt from the buzz-speed throttle and the
+      // buzz-signal requirement, using the latest carried guess: the second-team
+      // bounce-back, and a question too short to ever reach k.
       const forcedLastWord =
         isLastWord && (this.state.teamBuzzed[otherTeam] || questionShorterThanK);
-      if (buzzedAtOrAfterK || forcedLastWord) {
-        validBuzzes.push([playerId, guess]);
+      if (forcedLastWord) {
+        validBuzzes.push([playerId, guess, weightClass]);
+        continue;
       }
+
+      // Buzz-period throttle: the model only fires at every n-th of its own buzz-file
+      // rows (eval points) at/after k, where n is the per-weight-class buzz period.
+      const period =
+        this.config.ai_buzz_periods?.[weightClass] ??
+        this.config.ai_buzz_periods?.lightweight ??
+        1;
+      const evalPoints = this.buzzes.getBuzzRowPositions(questionId, model);
+      if (!isFiringPoint(evalPoints, k, currentPosition, period)) continue;
+
+      // Accumulated buzz: the most recent buzz=1 row at/before this firing point.
+      // Suppressed buzzes still accumulate, so the guess spoken may predate the
+      // firing row (whose own buzz signal may be 0).
+      const accumulated = this.buzzes.getLatestBuzz(questionId, model, currentPosition);
+      if (
+        !accumulated ||
+        accumulated.token_position === undefined ||
+        accumulated.token_position < k
+      ) {
+        continue;
+      }
+
+      validBuzzes.push([playerId, accumulated, weightClass]);
     }
 
-    // Handle first valid buzz
+    // Select the winning buzz: lightweight > midweight > heavyweight, random among ties.
     if (validBuzzes.length > 0 && this.tossupInProgress()) {
-      const [playerId, guess] = validBuzzes[0];
+      const winnerIdx = selectBuzzWinnerIndex(validBuzzes.map(([, , wc]) => wc));
+      const [playerId, guess] = validBuzzes[winnerIdx];
 
       this.state.buzzingPlayer = playerId;
       this.state.currentGuesses = Array.from(guesses.values());
@@ -1411,6 +1441,56 @@ export class GameEngine {
     }
 
     console.log(`Player removed mid-game: ${player.name} from ${team.name}`);
+    this.emitState();
+
+    return { success: true };
+  }
+
+  /**
+   * Update an existing human player's buzzer key mid-game
+   */
+  updateBuzzerKey(playerId: string, newKey: string): { success: boolean; error?: string } {
+    // Validate phase
+    if (!this.canModifyPlayers()) {
+      return {
+        success: false,
+        error: 'Buzzer keys can only be changed at the start of a tossup (within the first 5 reveal tokens)'
+      };
+    }
+
+    // Check if player exists
+    const player = this.players.get(playerId);
+    if (!player) {
+      return { success: false, error: 'Player not found' };
+    }
+
+    // Only human players have buzzer keys
+    if (player.type !== 'human') {
+      return { success: false, error: 'Only human players have buzzer keys' };
+    }
+
+    // Validate the new key
+    const buzzerKey = newKey?.trim().toUpperCase();
+    if (!buzzerKey) {
+      return { success: false, error: 'Buzzer key cannot be empty' };
+    }
+
+    // Check uniqueness against other players
+    const existingOwner = this.buzzerKeyToPlayerId.get(buzzerKey);
+    if (existingOwner && existingOwner !== playerId) {
+      return { success: false, error: `Buzzer key "${buzzerKey}" is already in use` };
+    }
+
+    // Remove the old key mapping and set the new one
+    const kwargs = player.extra_kwargs as { buzzer_key: string };
+    const oldKey = kwargs.buzzer_key?.toUpperCase();
+    if (oldKey) {
+      this.buzzerKeyToPlayerId.delete(oldKey);
+    }
+    kwargs.buzzer_key = buzzerKey;
+    this.buzzerKeyToPlayerId.set(buzzerKey, playerId);
+
+    console.log(`Buzzer key updated mid-game: ${player.name} -> ${buzzerKey}`);
     this.emitState();
 
     return { success: true };

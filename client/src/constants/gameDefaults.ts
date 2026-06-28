@@ -24,6 +24,11 @@ export const DEFAULT_AI_TOSSUP_SCORE_FACTORS = {
 export const DEFAULT_TOSSUP_DEFLATION_MODE: DeflationMode = 'weighted';
 export const DEFAULT_TOSSUP_STATIC_DEFLATION = 5;
 export const DEFAULT_AUTONOMOUS_K = 75;
+export const DEFAULT_AI_BUZZ_PERIODS = {
+  lightweight: 1,
+  midweight: 1,
+  heavyweight: 1,
+} as const;
 export const DEFAULT_BONUS_AI_CONSULT_FACTOR = 0.5;
 export const DEFAULT_BONUS_DEFLATION_MODE: DeflationMode = 'static';
 export const DEFAULT_BONUS_STATIC_DEFLATION = 5;

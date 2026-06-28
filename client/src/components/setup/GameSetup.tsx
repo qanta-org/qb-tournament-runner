@@ -2,11 +2,13 @@ import { useState, useEffect } from 'react';
 import { useGame } from '../../context/GameContext';
 import { TeamBuilder } from './TeamBuilder';
 import { FileUploader } from './FileUploader';
+import { BuzzerTestDialog, humanPlayersFromConfig } from './BuzzerTestDialog';
 import { fetchRulePresets, fetchRulePreset, type RulePresetSummary } from '../../api/config';
 import { fetchHumanRoster } from '../../api/rosters';
 import type { AIPlayerKwargs, DeflationMode, GameConfig, ModelInfo, Player, Team } from '../../../../shared/types';
 import { aiModelSummaryLines } from '../../../../shared/modelLabels';
 import {
+  DEFAULT_AI_BUZZ_PERIODS,
   DEFAULT_AI_TOSSUP_SCORE_FACTORS,
   DEFAULT_AUTONOMOUS_K,
   DEFAULT_BONUS_ABSTAIN_POINTS,
@@ -109,9 +111,10 @@ function PresetTeamPicker({ datasetId, teamColor, currentTeam, onChange }: Prese
 }
 
 export function GameSetup() {
-  const { startGame, isConnected } = useGame();
+  const { startGame, isConnected, getTeamColor } = useGame();
 
   const [step, setStep] = useState<SetupStep>('files');
+  const [pendingConfig, setPendingConfig] = useState<GameConfig | null>(null);
   const [teamA, setTeamA] = useState<Team>(DEFAULT_TEAM_A);
   const [teamB, setTeamB] = useState<Team>(DEFAULT_TEAM_B);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
@@ -139,6 +142,11 @@ export function GameSetup() {
     tossupDeflationMode: DEFAULT_TOSSUP_DEFLATION_MODE as DeflationMode,
     tossupStaticDeflation: DEFAULT_TOSSUP_STATIC_DEFLATION,
     autonomousK: DEFAULT_AUTONOMOUS_K,
+    aiBuzzPeriods: DEFAULT_AI_BUZZ_PERIODS as {
+      lightweight: number;
+      midweight: number;
+      heavyweight: number;
+    },
     bonusAiConsultFactor: DEFAULT_BONUS_AI_CONSULT_FACTOR,
     bonusDeflationMode: DEFAULT_BONUS_DEFLATION_MODE as DeflationMode,
     bonusStaticDeflation: DEFAULT_BONUS_STATIC_DEFLATION,
@@ -177,6 +185,7 @@ export function GameSetup() {
         tossupDeflationMode: c.tossup_deflation_mode ?? prev.tossupDeflationMode,
         tossupStaticDeflation: c.tossup_static_deflation ?? prev.tossupStaticDeflation,
         autonomousK: c.autonomous_default_k ?? prev.autonomousK,
+        aiBuzzPeriods: c.ai_buzz_periods ?? prev.aiBuzzPeriods,
         bonusAiConsultFactor: c.bonus_ai_consult_factor ?? prev.bonusAiConsultFactor,
         bonusDeflationMode: c.bonus_deflation_mode ?? prev.bonusDeflationMode,
         bonusStaticDeflation: c.bonus_static_deflation ?? prev.bonusStaticDeflation,
@@ -264,6 +273,7 @@ export function GameSetup() {
       tossup_deflation_mode: settings.tossupDeflationMode,
       tossup_static_deflation: settings.tossupStaticDeflation,
       autonomous_default_k: settings.autonomousK,
+      ai_buzz_periods: settings.aiBuzzPeriods,
       bonus_ai_consult_factor: settings.bonusAiConsultFactor,
       bonus_deflation_mode: settings.bonusDeflationMode,
       bonus_static_deflation: settings.bonusStaticDeflation,
@@ -271,7 +281,7 @@ export function GameSetup() {
       bonus_abstain_points: settings.bonusAbstainPoints,
     };
 
-    startGame(config);
+    setPendingConfig(config);
   };
 
   const canProceedFromFiles = files.tossupFile && files.modelDirectory;
@@ -728,6 +738,42 @@ export function GameSetup() {
                 </div>
               </div>
 
+              <div className="mt-6">
+                <h3 className="text-base font-semibold mb-3">AI Buzzing Period</h3>
+                <div className="border rounded-lg p-4 space-y-3">
+                  <div className="grid grid-cols-3 gap-2">
+                    {(['lightweight', 'midweight', 'heavyweight'] as const).map((wc) => (
+                      <div key={wc}>
+                        <label className="label">
+                          {wc === 'lightweight' ? 'LW' : wc === 'midweight' ? 'MW' : 'HW'} period
+                        </label>
+                        <input
+                          type="number"
+                          step="1"
+                          min={1}
+                          value={settings.aiBuzzPeriods[wc]}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              aiBuzzPeriods: {
+                                ...settings.aiBuzzPeriods,
+                                [wc]: Math.max(1, parseInt(e.target.value) || 1),
+                              },
+                            })
+                          }
+                          className="input"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    Buzz period n: the model fires at every n-th of its own buzz rows after its k
+                    gate (1 = every row; 2 = every 2nd; 3 = every 3rd). Suppressed buzzes still
+                    accumulate and fire the most recent guess at the next firing point.
+                  </p>
+                </div>
+              </div>
+
               <div className="mt-6 flex justify-between">
                 <button onClick={() => setStep('teams')} className="btn btn-secondary">
                   ← Back
@@ -823,6 +869,21 @@ export function GameSetup() {
           )}
         </div>
       </div>
+
+      {pendingConfig && (
+        <BuzzerTestDialog
+          humanPlayers={humanPlayersFromConfig(
+            pendingConfig,
+            getTeamColor('team_a'),
+            getTeamColor('team_b')
+          )}
+          onConfirm={() => {
+            startGame(pendingConfig);
+            setPendingConfig(null);
+          }}
+          onCancel={() => setPendingConfig(null)}
+        />
+      )}
     </div>
   );
 }

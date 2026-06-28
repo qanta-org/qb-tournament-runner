@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { AIPlayerKwargs, ModelInfo, ModelRosterEntry, Team, Player } from '../../../../shared/types';
+import type { AIPlayerKwargs, AIWeightClass, ModelInfo, ModelRosterEntry, Team, Player } from '../../../../shared/types';
 import { aiModelSummaryLines, aiPlayerDisplayName } from '../../../../shared/modelLabels';
 import type { ApiRosterPlayer } from '../../api/rosters';
 import { fetchBonusModelRoster, fetchHumanRoster, fetchTossupModelRoster } from '../../api/rosters';
@@ -343,9 +343,135 @@ export function AiModelEditor({
   );
 }
 
-export function TeamBuilder({ 
-  team, 
-  onChange, 
+/** A selectable AI model row in the checklist (one phase). */
+interface AiModelRow {
+  model: string;
+  name: string;
+  weight_class?: AIWeightClass;
+}
+
+const WEIGHT_LABELS: Record<AIWeightClass, string> = {
+  lightweight: 'LW',
+  midweight: 'MW',
+  heavyweight: 'HW',
+};
+
+const WEIGHT_BADGE_CLASS: Record<AIWeightClass, string> = {
+  lightweight: 'bg-green-100 text-green-700',
+  midweight: 'bg-amber-100 text-amber-700',
+  heavyweight: 'bg-red-100 text-red-700',
+};
+
+const WEIGHT_RANK: Record<AIWeightClass, number> = {
+  lightweight: 0,
+  midweight: 1,
+  heavyweight: 2,
+};
+
+function weightRank(weightClass?: AIWeightClass): number {
+  return weightClass ? WEIGHT_RANK[weightClass] : 3;
+}
+
+/** Small LW/MW/HW chip; renders nothing when the weight class is unknown. */
+function WeightBadge({ weightClass }: { weightClass?: AIWeightClass }) {
+  if (!weightClass) return null;
+  return (
+    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${WEIGHT_BADGE_CLASS[weightClass]}`}>
+      {WEIGHT_LABELS[weightClass]}
+    </span>
+  );
+}
+
+/**
+ * Build the selectable rows for one phase: prefer the phase roster (with weight
+ * classes), fall back to raw dataset model names, drop models already on the team
+ * for that phase, and sort by weight class then name.
+ */
+function buildPhaseRows(
+  roster: ModelRosterEntry[],
+  fallbackNames: string[],
+  usedModels: Set<string>
+): AiModelRow[] {
+  const base: AiModelRow[] =
+    roster.length > 0
+      ? roster.map((e) => ({ model: e.model, name: e.name, weight_class: e.weight_class }))
+      : fallbackNames.map((n) => ({ model: n, name: n }));
+  return base
+    .filter((r) => !usedModels.has(r.model))
+    .sort((a, b) => {
+      const d = weightRank(a.weight_class) - weightRank(b.weight_class);
+      return d !== 0 ? d : a.name.localeCompare(b.name);
+    });
+}
+
+/** A checkbox group of AI models for one phase, with Select All / Clear. */
+function AiModelChecklist({
+  title,
+  rows,
+  selected,
+  onToggle,
+  onSelectAll,
+  onClear,
+}: {
+  title: string;
+  rows: AiModelRow[];
+  selected: Set<string>;
+  onToggle: (model: string) => void;
+  onSelectAll: () => void;
+  onClear: () => void;
+}) {
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-2">
+        <h4 className="text-sm font-semibold text-gray-700">{title}</h4>
+        {rows.length > 0 && (
+          <div className="flex gap-2 text-xs">
+            <button onClick={onSelectAll} className="text-blue-600 hover:text-blue-800">
+              Select All
+            </button>
+            <button onClick={onClear} className="text-gray-500 hover:text-gray-700">
+              Clear
+            </button>
+          </div>
+        )}
+      </div>
+      {rows.length === 0 ? (
+        <p className="text-xs text-gray-400 italic">No models available.</p>
+      ) : (
+        <div className="space-y-1">
+          {rows.map((row) => {
+            const isSelected = selected.has(row.model);
+            return (
+              <div
+                key={row.model}
+                onClick={() => onToggle(row.model)}
+                className={`w-full flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${
+                  isSelected ? 'bg-blue-50 border-blue-300' : 'hover:bg-gray-50'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => {}}
+                  className="w-4 h-4 text-blue-600"
+                />
+                <span className="text-xl">🤖</span>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm truncate">{row.name}</div>
+                </div>
+                <WeightBadge weightClass={row.weight_class} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function TeamBuilder({
+  team,
+  onChange,
   teamLabel, 
   teamColor, 
   availableModels = [], 
@@ -364,9 +490,9 @@ export function TeamBuilder({
   const [customName, setCustomName] = useState('');
   const [customBuzzerKey, setCustomBuzzerKey] = useState('');
 
-  // Add AI form state
-  const [aiTossupModel, setAiTossupModel] = useState('');
-  const [aiBonusModel, setAiBonusModel] = useState('');
+  // Add AI checklist state (response-file keys selected per phase)
+  const [selectedTossupModels, setSelectedTossupModels] = useState<Set<string>>(new Set());
+  const [selectedBonusModels, setSelectedBonusModels] = useState<Set<string>>(new Set());
 
   // Multi-select state for roster
   const [selectedRosterPlayers, setSelectedRosterPlayers] = useState<Set<string>>(new Set());
@@ -496,27 +622,87 @@ export function TeamBuilder({
     setShowAddDialog(false);
   };
 
-  const addAIPlayer = () => {
-    const tossupEntry = tossupRoster.find((e) => e.model === aiTossupModel);
-    const bonusEntry = bonusRoster.find((e) => e.model === aiBonusModel);
-    const extra_kwargs: AIPlayerKwargs = {
-      tossup_model: aiTossupModel,
-      bonus_model: aiBonusModel,
-      tossup_model_name: tossupEntry?.name,
-      bonus_model_name: bonusEntry?.name,
-      tossup_weight_class: tossupEntry?.weight_class,
-      bonus_weight_class: bonusEntry?.weight_class,
-      coupled: false,
+  const toggleTossupModel = (model: string) => {
+    setSelectedTossupModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(model)) next.delete(model);
+      else next.add(model);
+      return next;
+    });
+  };
+
+  const toggleBonusModel = (model: string) => {
+    setSelectedBonusModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(model)) next.delete(model);
+      else next.add(model);
+      return next;
+    });
+  };
+
+  // Pair selected tossup and bonus models (in displayed order) into combined AI
+  // players: the first min(#tossup, #bonus) selections become tossup+bonus players,
+  // and any leftover selections in the longer column are added as single-phase players.
+  const addSelectedAIPlayers = () => {
+    const selT = tossupRows.filter((r) => selectedTossupModels.has(r.model));
+    const selB = bonusRows.filter((r) => selectedBonusModels.has(r.model));
+    const pairCount = Math.min(selT.length, selB.length);
+
+    const newPlayers: Player[] = [];
+    let idx = 0;
+    const addPlayer = (extra_kwargs: AIPlayerKwargs) => {
+      newPlayers.push({
+        player_id: `custom_ai_${Date.now()}_${idx++}`,
+        name: aiPlayerDisplayName(extra_kwargs),
+        type: 'ai',
+        extra_kwargs,
+      });
     };
-    const newPlayer: Player = {
-      player_id: `custom_ai_${Date.now()}`,
-      name: aiPlayerDisplayName(extra_kwargs),
-      type: 'ai',
-      extra_kwargs,
-    };
-    onChange({ ...team, players: [...team.players, newPlayer] });
-    setAiTossupModel('');
-    setAiBonusModel('');
+
+    // Paired tossup + bonus players
+    for (let i = 0; i < pairCount; i++) {
+      const t = selT[i];
+      const b = selB[i];
+      addPlayer({
+        tossup_model: t.model,
+        bonus_model: b.model,
+        tossup_model_name: t.name,
+        bonus_model_name: b.name,
+        tossup_weight_class: t.weight_class,
+        bonus_weight_class: b.weight_class,
+        coupled: false,
+      });
+    }
+
+    // Leftover tossup-only players (when more tossups than bonuses were selected)
+    for (let i = pairCount; i < selT.length; i++) {
+      const t = selT[i];
+      addPlayer({
+        tossup_model: t.model,
+        bonus_model: '',
+        tossup_model_name: t.name,
+        tossup_weight_class: t.weight_class,
+        coupled: false,
+      });
+    }
+
+    // Leftover bonus-only players (when more bonuses than tossups were selected)
+    for (let i = pairCount; i < selB.length; i++) {
+      const b = selB[i];
+      addPlayer({
+        tossup_model: '',
+        bonus_model: b.model,
+        bonus_model_name: b.name,
+        bonus_weight_class: b.weight_class,
+        coupled: false,
+      });
+    }
+
+    if (newPlayers.length > 0) {
+      onChange({ ...team, players: [...team.players, ...newPlayers] });
+    }
+    setSelectedTossupModels(new Set());
+    setSelectedBonusModels(new Set());
     setShowAddDialog(false);
   };
 
@@ -560,6 +746,22 @@ export function TeamBuilder({
   };
 
   const filteredRoster = getFilteredRoster();
+
+  // AI model checklist rows (exclude models already on this team for that phase)
+  const aiPlayers = team.players.filter((p) => p.type === 'ai');
+  const usedTossupModels = new Set(
+    aiPlayers
+      .map((p) => (p.extra_kwargs as AIPlayerKwargs).tossup_model)
+      .filter((m): m is string => !!m)
+  );
+  const usedBonusModels = new Set(
+    aiPlayers
+      .map((p) => (p.extra_kwargs as AIPlayerKwargs).bonus_model)
+      .filter((m): m is string => !!m)
+  );
+  const tossupRows = buildPhaseRows(tossupRoster, tossupModelNames, usedTossupModels);
+  const bonusRows = buildPhaseRows(bonusRoster, bonusModelNames, usedBonusModels);
+  const totalSelectedAi = selectedTossupModels.size + selectedBonusModels.size;
 
   const coupledEntries = coupledRosterEntries(tossupRoster, bonusRoster);
   const canCoupleModels = canUseCoupledMode(tossupRoster, bonusRoster, coupledModelNames);
@@ -680,7 +882,7 @@ export function TeamBuilder({
       {/* Add player dialog */}
       {showAddDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[80vh] overflow-hidden">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] overflow-hidden">
             {/* Dialog header */}
             <div className="flex items-center justify-between p-4 border-b">
               <h3 className="text-lg font-bold" style={{ color: teamColor }}>
@@ -828,65 +1030,50 @@ export function TeamBuilder({
                 </div>
               ) : addMode === 'ai' ? (
                 <div className="space-y-4">
-                  <p className="text-sm text-gray-500">
-                    Select a tossup model, bonus model, or both. Leave either blank to skip that phase.
-                  </p>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Tossup Model
-                    </label>
-                    <RosterModelSelect
-                      value={aiTossupModel}
-                      onChange={(modelKey) => setAiTossupModel(modelKey)}
-                      entries={tossupRoster}
-                      fallbackOptions={tossupModelNames}
-                      allModelNames={allModelNames}
-                      hasModelInfo={hasModelInfo}
-                      emptyLabel="None (skip tossups)"
-                      placeholder="Tossup model key"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Bonus Model
-                    </label>
-                    <RosterModelSelect
-                      value={aiBonusModel}
-                      onChange={(modelKey) => setAiBonusModel(modelKey)}
-                      entries={bonusRoster}
-                      fallbackOptions={bonusModelNames}
-                      allModelNames={allModelNames}
-                      hasModelInfo={hasModelInfo}
-                      emptyLabel="None (skip bonuses)"
-                      placeholder="Bonus model key"
-                    />
-                  </div>
-
-                  {(aiTossupModel || aiBonusModel) && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Display Name
-                      </label>
-                      <p className="text-sm text-gray-800 bg-gray-50 rounded px-3 py-2">
-                        {aiPlayerDisplayName({
-                          tossup_model: aiTossupModel,
-                          bonus_model: aiBonusModel,
-                          tossup_model_name: tossupRoster.find((e) => e.model === aiTossupModel)?.name,
-                          bonus_model_name: bonusRoster.find((e) => e.model === aiBonusModel)?.name,
-                        })}
-                      </p>
+                  {loading ? (
+                    <div className="text-center py-8 text-gray-500">Loading models...</div>
+                  ) : tossupRows.length === 0 && bonusRows.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500">
+                      No AI models available in this dataset.
                     </div>
-                  )}
+                  ) : (
+                    <>
+                      <p className="text-sm text-gray-500">
+                        Tossup and bonus selections are paired top-to-bottom into combined AI
+                        players. Extra selections in one column are added as single-phase players.
+                      </p>
 
-                  <button
-                    onClick={addAIPlayer}
-                    disabled={!aiTossupModel && !aiBonusModel}
-                    className="btn btn-primary w-full"
-                  >
-                    Add AI Player
-                  </button>
+                      <div className="grid grid-cols-2 gap-4">
+                        <AiModelChecklist
+                          title="Tossup Models"
+                          rows={tossupRows}
+                          selected={selectedTossupModels}
+                          onToggle={toggleTossupModel}
+                          onSelectAll={() => setSelectedTossupModels(new Set(tossupRows.map((r) => r.model)))}
+                          onClear={() => setSelectedTossupModels(new Set())}
+                        />
+
+                        <AiModelChecklist
+                          title="Bonus Models"
+                          rows={bonusRows}
+                          selected={selectedBonusModels}
+                          onToggle={toggleBonusModel}
+                          onSelectAll={() => setSelectedBonusModels(new Set(bonusRows.map((r) => r.model)))}
+                          onClear={() => setSelectedBonusModels(new Set())}
+                        />
+                      </div>
+
+                      <button
+                        onClick={addSelectedAIPlayers}
+                        disabled={totalSelectedAi === 0}
+                        className="btn btn-primary w-full"
+                      >
+                        {totalSelectedAi === 0
+                          ? 'Add AI Players'
+                          : `Add ${totalSelectedAi} AI Player${totalSelectedAi !== 1 ? 's' : ''}`}
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-4">

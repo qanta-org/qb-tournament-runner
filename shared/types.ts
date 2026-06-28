@@ -140,6 +140,15 @@ export interface GameConfig {
   tossup_static_deflation: number;
   // Global token threshold for "autonomous after k tokens" buzz mode (k=1 means no gate).
   autonomous_default_k: number;
+  // Per-weight-class buzz period: the AI fires at every n-th of its own buzz-file rows
+  // (eval points) at/after its k gate. n = 1 (default) fires at every row; 2 every 2nd;
+  // 3 every 3rd; etc. Suppressed buzzes still accumulate and fire the most recent buzz=1
+  // guess at the next firing row. n < 1 means the AI never auto-fires.
+  ai_buzz_periods: {
+    lightweight: number;
+    midweight: number;
+    heavyweight: number;
+  };
   // Fraction of bonus part points awarded when the team consults AI before answering.
   // Deprecated: retained only as a back-compat fallback when `bonus_deflation_mode` is unset.
   bonus_ai_consult_factor: number;
@@ -646,6 +655,10 @@ export interface ClientToServerEvents {
     playerId: string,
     callback?: (result: { success: boolean; error?: string }) => void
   ) => void;
+  'moderator:update_buzzer_key': (
+    data: { playerId: string; buzzerKey: string },
+    callback?: (result: { success: boolean; error?: string }) => void
+  ) => void;
   'moderator:can_modify_players': (
     callback?: (result: { canModify: boolean }) => void
   ) => void;
@@ -682,6 +695,11 @@ export const DEFAULT_GAME_CONFIG: Partial<GameConfig> = {
   tossup_deflation_mode: 'weighted',
   tossup_static_deflation: 5,
   autonomous_default_k: 1,
+  ai_buzz_periods: {
+    lightweight: 1,
+    midweight: 1,
+    heavyweight: 1,
+  },
   bonus_ai_consult_factor: 0.5,
   bonus_deflation_mode: 'static',
   bonus_static_deflation: 5,

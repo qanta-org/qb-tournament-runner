@@ -24,6 +24,14 @@ export function ModeratorControls() {
   // Keyboard buzzer hook
   useKeyboardBuzzer();
 
+  useEffect(() => {
+    if (!gameState.revealLockoutUntilMs) {
+      return;
+    }
+    const interval = window.setInterval(() => setNowMs(Date.now()), REVEAL_LOCKOUT_TICK_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [gameState.revealLockoutUntilMs]);
+
   if (!gameConfig) return null;
 
   const isTossupPhase = ['tossup_ready', 'tossup_streaming'].includes(gameState.phase);
@@ -39,14 +47,6 @@ export function ModeratorControls() {
   const consultPoints = bonusConsultPoints(gameConfig, owningTeamPlayers);
   const abstainPoints = gameConfig.bonus_abstain_points ?? 1;
   const aiRevealed = gameState.bonusAiRevealed;
-
-  useEffect(() => {
-    if (!gameState.revealLockoutUntilMs) {
-      return;
-    }
-    const interval = window.setInterval(() => setNowMs(Date.now()), REVEAL_LOCKOUT_TICK_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [gameState.revealLockoutUntilMs]);
 
   const handleNextWord = () => {
     if (isTossupPhase && !gameConfig.auto_stream && !isRevealLocked) {

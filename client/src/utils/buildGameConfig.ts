@@ -56,6 +56,13 @@ export function buildGameConfig({
       overrides.tossup_static_deflation ?? base.tossup_static_deflation ?? 5,
     autonomous_default_k:
       overrides.autonomous_default_k ?? base.autonomous_default_k ?? 1,
+    ai_buzz_periods:
+      overrides.ai_buzz_periods ??
+      base.ai_buzz_periods ?? {
+        lightweight: 1,
+        midweight: 1,
+        heavyweight: 1,
+      },
     bonus_ai_consult_factor:
       overrides.bonus_ai_consult_factor ?? base.bonus_ai_consult_factor ?? 0.5,
     bonus_deflation_mode:

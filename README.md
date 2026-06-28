@@ -12,9 +12,11 @@ A web-based Quiz Bowl buzzer system for human-AI hybrid competitions.
 - **Moderator preview mode**: See full question text with grayed unrevealed words
 - **Player reveal mode**: Words only appear as they're revealed
 - Support for multiple human and AI players per team
-- **Mid-game player management**: Add/remove human players during gameplay
+- **Mid-game player management**: Add/remove human players and change buzzer keys during gameplay
+- **Pre-game buzzer test**: Each human verifies their key before the game starts (with a moderator skip override)
 - Keyboard-based buzzer system for human players
 - AI player responses loaded from pre-generated CSV files
+- **Configurable AI buzz timing**: per-weight-class "autonomous after k tokens" gate, buzz-period throttling, and lightweight→heavyweight buzz priority
 - Configurable scoring (power points, penalties, bonus questions)
 - Tournament and simple dataset formats
 - Roster management with model validation
@@ -139,7 +141,7 @@ Notes:
 - These presets are **development-only** and are only wired in when `import.meta.env.DEV` is true.
 - Each preset expects a tournament-style dataset at `data/<preset>/` (e.g. `data/trails-con/`, `data/qanta26/`) with:
   - `packet_1/tossups.csv`, `packet_1/bonuses.csv`
-  - `ai_roster.csv`, `human_roster.csv`
+  - `ai_tossup_roster.csv`, `ai_bonus_roster.csv`, `human_roster.csv`
   - `responses/` with the relevant `*.buzz.csv` / `*.bonus.csv` files.
 - You can also select a preset at runtime with the `?preset=<id>` query param (e.g. `?preset=qanta26`).
 - For regular usage (manual dataset/roster selection and team configuration), continue to use `npm run dev` and the Game Setup wizard.
@@ -217,6 +219,29 @@ Both tossup and bonus AI scoring can be deflated based on AI model size (`weight
 
 All awards are clamped to a minimum of `0`. Deflation only affects positive earned points; tossup penalties for wrong buzzes, `own`/`abstain` bonus decisions are unaffected. The legacy `bonus_ai_consult_factor` is retained only as a fallback for configs saved before deflation modes existed.
 
+### AI Buzz Behavior
+
+When and whether an AI fires on a tossup is governed by three settings, all configurable per tournament (rule preset / game settings) and adjustable live by the moderator.
+
+**Per-AI buzz mode** (`moderator:set_ai_buzz_mode`) — each AI is `autonomous`, `muted`, or `semi`:
+
+- `autonomous` — the AI buzzes on its own, subject to the gate and throttle below.
+- `muted` — the AI never buzzes for the rest of the game.
+- `semi` — the AI never buzzes on its own; a human presses the AI's auto-assigned key (see [Keyboard Controls](#keyboard-controls)) to buzz on its behalf with the AI's most recent guess.
+
+**Autonomous-after-k gate** (`autonomous_default_k`, per-AI override via `moderator:set_autonomous_k`) — an AI cannot buzz before token position `k`. Buzz decisions made before `k` are ignored; the first qualifying buzz at/after `k` counts. `k = 1` means no gate. Two forced last-word cases are exempt (the second team's bounce-back, and questions too short to ever reach `k`).
+
+**Buzz-period throttle** (`ai_buzz_periods`, per weight class) — after the gate, an AI fires only at every n-th of its own buzz-file rows ("eval points"), where `n` is the period for its weight class:
+
+- `n = 1` — fires at every eval point (default).
+- `n = 2` / `n = 3` / … — fires at every 2nd / 3rd / … eval point after `k`.
+- Suppressed buzzes still **accumulate**: at a firing point the AI speaks its most recent guess whose buzz signal was set, even if that guess predates the firing row.
+- `n < 1` — the AI never auto-fires.
+
+This lets stronger (heavier) models be slowed relative to lighter ones. The QANTA 2026 preset uses `LW 3 / MW 2 / HW 1`.
+
+**Buzz priority** — when multiple AIs qualify on the same token, the lowest weight class wins (lightweight → midweight → heavyweight), with ties broken at random.
+
 ### Tournament Dashboard
 
 - **Schedule tab**: Games grouped by round and phase (Prelim Round 1, Semifinals, Final). Each game shows teams, packet, status (Scheduled | Ready | In Progress | Completed), and "Start Game" when ready.
@@ -286,7 +311,8 @@ For multi-packet tournaments with player rosters:
 
 ```
 tournament_name/
-├── ai_roster.csv            # Required: AI player definitions
+├── ai_tossup_roster.csv     # Required: tossup AI model catalog
+├── ai_bonus_roster.csv      # Required: bonus AI model catalog
 ├── human_roster.csv         # Required: Human player definitions
 ├── packet_1/
 │   ├── tossups.csv
@@ -345,20 +371,21 @@ Multimodal asset resolution:
 | `answerline1/2/3` | No | Formatted answer lines |
 | `answer_image1/2/3` | No | Packet-relative path (e.g. `img/b6_p1_a.png`) to an image shown on the per-part reveal screen alongside the answer |
 
-#### ai_roster.csv
+#### ai_tossup_roster.csv / ai_bonus_roster.csv
+
+Tossup and bonus AI catalogs are **decoupled** into two files so the two phases can draw from independent populations of models. Both share the same columns; the engine pairs a tossup model with a bonus model when an AI player is built in the Team Builder.
 
 | Column | Required | Description |
 |--------|----------|-------------|
-| `player_id` | Yes | Unique player ID |
-| `name` | Yes | Display name |
-| `type` | Yes | Must be "ai" |
-| `tossup_model` | Yes | Model name for tossups (must match response file) |
-| `bonus_model` | Yes | Model name for bonuses |
-| `tossup_model_cost` | No | Cost metric |
-| `skill_level` | No | Skill tier (High, Mid, Low) |
-| `weight_class` | No | AI model weight class (`lightweight`, `midweight`, or `heavyweight`), used by the `weighted` tossup/bonus deflation modes. Defaults to `lightweight` when blank. See [AI Score Deflation](#ai-score-deflation). |
+| `id` | Yes | Unique model id within the file |
+| `name` | Yes | Display name shown in the UI |
+| `model` | Yes | Response-file key (must match the response file, e.g. `Author__model` → `Author__model.buzz.csv` / `.bonus.csv`). May carry a submission prefix (`tossup__…` / `bonus__…`) that is stripped to locate the file. |
+| `weight_class` | No | Weight class (`lightweight`, `midweight`, or `heavyweight`), used by the `weighted` deflation modes, the `ai_buzz_periods` throttle, and buzz priority. Defaults to `lightweight` when blank. See [AI Score Deflation](#ai-score-deflation) and [AI Buzz Behavior](#ai-buzz-behavior). |
+| `composition` | No | Underlying base model(s), for display only |
 
-**Important:** Model names must exactly match response file names (e.g., `Author__model` → `Author__model.buzz.csv`)
+A single legacy `ai_roster.csv` (with `tossup_model` / `bonus_model` columns) is still accepted as a fallback when the dedicated files are absent.
+
+**Important:** `model` values must exactly match response file names (case-sensitive).
 
 #### human_roster.csv
 
@@ -400,8 +427,8 @@ The application validates datasets and shows warnings/errors:
 
 | Issue | Type | Description |
 |-------|------|-------------|
-| Missing tossup responses | Error | AI roster references model without .buzz.csv file |
-| Missing bonus responses | Warning | AI roster references model without .bonus.csv file |
+| Missing tossup responses | Error | Tossup roster references a model without a .buzz.csv file |
+| Missing bonus responses | Warning | Bonus roster references a model without a .bonus.csv file |
 | No responses directory | Warning | No AI players can be used |
 | No AI roster | Warning | Dataset has models but no roster to define AI players |
 
@@ -451,6 +478,8 @@ The Swagger UI provides interactive documentation where you can explore and test
 ### Rosters
 - `GET /api/rosters/list` - List all roster files
 - `GET /api/rosters/ai?dataset=ID` - Get AI players (optionally from dataset)
+- `GET /api/rosters/ai/tossup?dataset=ID` - Get the tossup AI model catalog
+- `GET /api/rosters/ai/bonus?dataset=ID` - Get the bonus AI model catalog
 - `GET /api/rosters/human?dataset=ID` - Get human players
 
 ### Tournaments
@@ -492,6 +521,7 @@ The Swagger UI provides interactive documentation where you can explore and test
 - `moderator:play_bonus` - Jump to and play specific bonus (moderator only)
 - `moderator:add_player` - Add human player mid-game (moderator only)
 - `moderator:remove_player` - Remove human player mid-game (moderator only)
+- `moderator:update_buzzer_key` - Change a human player's buzzer key mid-game; only allowed at the start of a tossup (moderator only)
 - `moderator:can_modify_players` - Check if players can be modified (moderator only)
 - `moderator:set_ai_buzz_mode` - Set an AI's tossup buzz mode: `autonomous` / `muted` / `semi` (moderator only)
 - `moderator:set_autonomous_k` - Update a single AI's "autonomous after k tokens" threshold live during a game; `k=1` means no gate (moderator only)
@@ -1123,7 +1153,7 @@ The engine properly cleans up state when transitioning between phases:
 ## Troubleshooting
 
 ### "Missing tossup responses for player X"
-- Check that the `tossup_model` in `ai_roster.csv` matches a `.buzz.csv` file in `responses/`
+- Check that the `model` in `ai_tossup_roster.csv` matches a `.buzz.csv` file in `responses/`
 - Model name must be exact (case-sensitive)
 
 ### "No datasets found"

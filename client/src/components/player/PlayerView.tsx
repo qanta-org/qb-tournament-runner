@@ -24,6 +24,25 @@ export function PlayerView() {
   const { gameState, gameConfig, roomCode, leaveRoom, getPlayer, getTeamColor } = useGame();
   const [nowMs, setNowMs] = useState(() => Date.now());
 
+  useEffect(() => {
+    if (!gameState.revealLockoutUntilMs) return;
+    const interval = window.setInterval(() => setNowMs(Date.now()), REVEAL_LOCKOUT_TICK_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [gameState.revealLockoutUntilMs]);
+
+  // Warm the browser cache with every image in the current tossup so each one
+  // paints the instant its token is revealed (large packet images otherwise pop
+  // in a token late on remote displays). Preloading only fetches into cache; the
+  // images are still displayed solely when their token is revealed.
+  const tossupImageKey = gameState.tossupImageUrls.join('|');
+  useEffect(() => {
+    if (!tossupImageKey) return;
+    for (const url of tossupImageKey.split('|')) {
+      const img = new Image();
+      img.src = url;
+    }
+  }, [tossupImageKey]);
+
   if (!gameConfig) {
     return (
       <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col items-center justify-center p-8">
@@ -84,25 +103,6 @@ export function PlayerView() {
     const audio = new Audio(assetUrl);
     void audio.play();
   };
-
-  useEffect(() => {
-    if (!gameState.revealLockoutUntilMs) return;
-    const interval = window.setInterval(() => setNowMs(Date.now()), REVEAL_LOCKOUT_TICK_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [gameState.revealLockoutUntilMs]);
-
-  // Warm the browser cache with every image in the current tossup so each one
-  // paints the instant its token is revealed (large packet images otherwise pop
-  // in a token late on remote displays). Preloading only fetches into cache; the
-  // images are still displayed solely when their token is revealed.
-  const tossupImageKey = gameState.tossupImageUrls.join('|');
-  useEffect(() => {
-    if (!tossupImageKey) return;
-    for (const url of tossupImageKey.split('|')) {
-      const img = new Image();
-      img.src = url;
-    }
-  }, [tossupImageKey]);
 
   const showBonusResponsesForTeam = (teamId: TeamId) =>
     isBonusPhase &&

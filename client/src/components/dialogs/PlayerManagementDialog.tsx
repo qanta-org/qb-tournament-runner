@@ -8,11 +8,13 @@ interface PlayerManagementDialogProps {
 }
 
 export function PlayerManagementDialog({ teamId, onClose }: PlayerManagementDialogProps) {
-  const { gameConfig, getTeamColor, addPlayer, removePlayer, canModifyPlayers } = useGame();
-  
+  const { gameConfig, getTeamColor, addPlayer, removePlayer, updateBuzzerKey, canModifyPlayers } = useGame();
+
   const [mode, setMode] = useState<'list' | 'add'>('list');
   const [newPlayerName, setNewPlayerName] = useState('');
   const [newPlayerKey, setNewPlayerKey] = useState('');
+  const [editingPlayerId, setEditingPlayerId] = useState<string | null>(null);
+  const [editKey, setEditKey] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -79,6 +81,54 @@ export function PlayerManagementDialog({ teamId, onClose }: PlayerManagementDial
     }
   };
 
+  const startEditKey = (playerId: string, currentKey: string) => {
+    setEditingPlayerId(playerId);
+    setEditKey(currentKey || '');
+    setError(null);
+  };
+
+  const cancelEditKey = () => {
+    setEditingPlayerId(null);
+    setEditKey('');
+  };
+
+  const handleSaveKey = async (playerId: string) => {
+    const key = editKey.trim();
+    if (!key) {
+      setError('Buzzer key cannot be empty');
+      return;
+    }
+
+    const currentKey = (
+      [...gameConfig.team_a.players, ...gameConfig.team_b.players].find(
+        (p) => p.player_id === playerId
+      )?.extra_kwargs as { buzzer_key?: string } | undefined
+    )?.buzzer_key;
+
+    if (key.toUpperCase() === (currentKey || '').toUpperCase()) {
+      cancelEditKey();
+      return;
+    }
+
+    if (usedKeys.has(key.toUpperCase())) {
+      setError(`Buzzer key "${key}" is already in use`);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    const result = await updateBuzzerKey(playerId, key);
+
+    setLoading(false);
+
+    if (result.success) {
+      cancelEditKey();
+    } else {
+      setError(result.error || 'Failed to update buzzer key');
+    }
+  };
+
   const handleRemovePlayer = async (playerId: string) => {
     setLoading(true);
     setError(null);
@@ -136,6 +186,7 @@ export function PlayerManagementDialog({ teamId, onClose }: PlayerManagementDial
               ) : (
                 humanPlayers.map(player => {
                   const buzzerKey = (player.extra_kwargs as { buzzer_key?: string })?.buzzer_key;
+                  const isEditing = editingPlayerId === player.player_id;
                   return (
                     <div
                       key={player.player_id}
@@ -143,21 +194,60 @@ export function PlayerManagementDialog({ teamId, onClose }: PlayerManagementDial
                     >
                       <div className="flex items-center gap-2">
                         <span>👤</span>
-                        {buzzerKey && (
-                          <span className="px-1.5 py-0.5 bg-gray-200 rounded text-xs font-mono">
-                            {buzzerKey}
-                          </span>
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={editKey}
+                            onChange={(e) => setEditKey(e.target.value.slice(-1))}
+                            className="input w-12 px-1.5 py-0.5 text-xs font-mono text-center"
+                            maxLength={1}
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveKey(player.player_id);
+                              if (e.key === 'Escape') cancelEditKey();
+                            }}
+                          />
+                        ) : (
+                          buzzerKey && (
+                            <button
+                              onClick={() => canModify && startEditKey(player.player_id, buzzerKey)}
+                              disabled={!canModify || loading}
+                              className="px-1.5 py-0.5 bg-gray-200 rounded text-xs font-mono hover:bg-gray-300 disabled:cursor-not-allowed disabled:hover:bg-gray-200"
+                              title={canModify ? 'Click to change buzzer key' : 'Cannot change key now'}
+                            >
+                              {buzzerKey} ✎
+                            </button>
+                          )
                         )}
                         <span className="font-medium">{player.name}</span>
                       </div>
-                      <button
-                        onClick={() => handleRemovePlayer(player.player_id)}
-                        disabled={!canModify || loading}
-                        className="text-red-500 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1"
-                        title={canModify ? 'Remove player' : 'Cannot remove now'}
-                      >
-                        ✕ Remove
-                      </button>
+                      {isEditing ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleSaveKey(player.player_id)}
+                            disabled={loading}
+                            className="text-green-600 hover:text-green-800 disabled:opacity-50 px-2 py-1 text-sm"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={cancelEditKey}
+                            disabled={loading}
+                            className="text-gray-500 hover:text-gray-700 disabled:opacity-50 px-2 py-1 text-sm"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleRemovePlayer(player.player_id)}
+                          disabled={!canModify || loading}
+                          className="text-red-500 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1"
+                          title={canModify ? 'Remove player' : 'Cannot remove now'}
+                        >
+                          ✕ Remove
+                        </button>
+                      )}
                     </div>
                   );
                 })

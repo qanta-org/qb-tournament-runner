@@ -450,6 +450,35 @@ export function setupGameHandlers(
     callback?.(result);
   });
 
+  socket.on('moderator:update_buzzer_key', (data: { playerId: string; buzzerKey: string }, callback?: (result: { success: boolean; error?: string }) => void) => {
+    if (!roomManager.isModerator(socket.id)) {
+      callback?.({ success: false, error: 'Not authorized' });
+      return;
+    }
+
+    const room = roomManager.getRoomForSocket(socket.id);
+    if (!room) {
+      callback?.({ success: false, error: 'Room not found' });
+      return;
+    }
+
+    const engine = gameEngines.get(room.code);
+    if (!engine) {
+      callback?.({ success: false, error: 'Game not started' });
+      return;
+    }
+
+    const result = engine.updateBuzzerKey(data.playerId, data.buzzerKey);
+
+    if (result.success) {
+      const updatedConfig = engine.getConfig();
+      roomManager.setGameConfig(room.code, updatedConfig);
+      emitToRoom(io, room.code, 'game:config', updatedConfig);
+    }
+
+    callback?.(result);
+  });
+
   socket.on('moderator:can_modify_players', (callback?: (result: { canModify: boolean }) => void) => {
     if (!roomManager.isModerator(socket.id)) {
       callback?.({ canModify: false });

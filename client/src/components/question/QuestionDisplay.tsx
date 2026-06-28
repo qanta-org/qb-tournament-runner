@@ -17,8 +17,6 @@ export function QuestionDisplay() {
   const { gameState, gameConfig } = useGame();
   const [nowMs, setNowMs] = useState(() => Date.now());
 
-  if (!gameConfig) return null;
-
   useEffect(() => {
     if (!gameState.revealLockoutUntilMs) return;
     const interval = window.setInterval(() => setNowMs(Date.now()), REVEAL_LOCKOUT_TICK_INTERVAL_MS);
@@ -35,6 +33,8 @@ export function QuestionDisplay() {
       img.src = url;
     }
   }, [tossupImageKey]);
+
+  if (!gameConfig) return null;
 
   // Progress percentage
   const progress =

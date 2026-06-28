@@ -310,6 +310,41 @@ export class Buzzes {
   }
 
   /**
+   * Sorted, ascending list of distinct token positions where the system has a
+   * response row for the question (the "eval points" used by buzz-speed throttling).
+   */
+  getBuzzRowPositions(questionId: string, system: string): number[] {
+    const guesses = this._buzzes.get(questionId)?.get(system);
+    if (!guesses) return [];
+    return Array.from(guesses.keys()).sort((a, b) => a - b);
+  }
+
+  /**
+   * The response at the highest token position at or before `maxPosition` that
+   * signalled a buzz (buzz !== 0). Returns undefined if none. This is the guess
+   * the AI "speaks" when it fires at a throttled firing point — possibly older
+   * than the latest carried-forward guess (whose buzz signal may be 0).
+   */
+  getLatestBuzz(
+    questionId: string,
+    system: string,
+    maxPosition: number
+  ): TossupResponse | undefined {
+    const guesses = this._buzzes.get(questionId)?.get(system);
+    if (!guesses) return undefined;
+
+    let latest: TossupResponse | undefined;
+    let latestPos = -1;
+    for (const [pos, response] of guesses) {
+      if (pos <= maxPosition && response.buzz && pos > latestPos) {
+        latestPos = pos;
+        latest = response;
+      }
+    }
+    return latest;
+  }
+
+  /**
    * Get bonus guesses for a question part
    */
   getBonusGuesses(questionId: string, partNum: number): BonusResponse[] {
