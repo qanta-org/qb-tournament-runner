@@ -3,7 +3,7 @@ import path from 'path';
 
 export default defineConfig({
   test: {
-    include: ['server/**/*.test.ts', 'client/src/**/*.test.{ts,tsx}'],
+    include: ['server/**/*.test.ts', 'shared/**/*.test.ts', 'client/src/**/*.test.{ts,tsx}'],
     environment: 'node',
     globals: true,
   },

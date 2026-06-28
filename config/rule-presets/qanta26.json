@@ -9,7 +9,7 @@
     },
     "tossup_deflation_mode": "weighted",
     "tossup_static_deflation": 5,
-    "autonomous_default_k": 75,
+    "autonomous_default_k": 40,
     "ai_buzz_periods": {
       "lightweight": 1,
       "midweight": 1,
