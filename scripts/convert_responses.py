@@ -15,7 +15,7 @@ import json
 import os
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 import pandas as pd
 
@@ -135,22 +135,39 @@ def main(tournament_dir: str):
     ensure_dir(responses_dir)
     # Print out the model names and check if question_id is unique:
     print("# Bonus models:", len(bonus_records))
+    model_errors = []
     for model_name, records in bonus_records.items():
         print(f"{model_name}: {len(records)} records")
         if len({r["qid"] for r in records}) != len(records):
-            raise ValueError(f"{model_name} has duplicate question_ids")
+            unique_qids = Counter({r["qid"] for r in records})
+            print(len(records), len(unique_qids))
+            print({k: v for k, v in unique_qids.items() if v > 1})
+            print(f"{model_name} has duplicate question_ids")
+            model_errors.append(model_name)
+            continue
         out_path = os.path.join(responses_dir, f"{model_name}.bonus.csv")
         convert_bonus_df(records, out_path)
         print(f"Wrote {len(records)} records to {out_path}")
 
+    print("\n# Model errors:")
+    for model_name in model_errors:
+        print(model_name)
+
     print("\n# Tossup models:", len(tossup_records))
+    model_errors = []
     for model_name, records in tossup_records.items():
         print(f"{model_name}: {len(records)} records")
         if len({r["qid"] for r in records}) != len(records):
-            raise ValueError(f"{model_name} has duplicate question_ids")
+            print(f"{model_name} has duplicate question_ids")
+            model_errors.append(model_name)
+            continue
         out_path = os.path.join(responses_dir, f"{model_name}.buzz.csv")
         convert_buzz_df(records, out_path)
         print(f"Wrote {len(records)} records to {out_path}")
+
+    print("\n# Model errors:")
+    for model_name in model_errors:
+        print(model_name)
 
 
 # %%

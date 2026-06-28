@@ -6,9 +6,17 @@ import pandas as pd
 from datasets import Dataset, load_dataset
 from tqdm import tqdm
 
+TOURNAMENT_CODE = "qanta26-online"
+
+dataset_name = (
+    "qanta-challenge/packet-questions"
+    if TOURNAMENT_CODE == "qanta26-offline"
+    else "qanta-challenge/final-packets-online"
+)
+
 # %%
-tossup_ds = load_dataset("qanta-challenge/packet-questions", "tossup", split="tossup")
-bonus_ds = load_dataset("qanta-challenge/packet-questions", "bonus", split="bonus")
+tossup_ds = load_dataset(dataset_name, "tossup", split="tossup")
+bonus_ds = load_dataset(dataset_name, "bonus", split="bonus")
 
 
 # %%
@@ -190,6 +198,6 @@ for packet_idx, packets in tqdm(tossup_packets.items(), total=len(tossup_packets
         packets,
         bonus_packets[packet_idx],
         packet_idx,
-        tournament_code="qanta26-offline",
+        tournament_code=TOURNAMENT_CODE,
     )
 # %%
